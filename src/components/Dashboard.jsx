@@ -14,7 +14,11 @@ const Dashboard = ({ onNavigate }) => {
             </header>
 
             <div className="stats-grid">
-                <div className="stat-card critical">
+                <div
+                    className="stat-card critical"
+                    onClick={() => onNavigate('inventory', { filter: 'expiring' })}
+                    style={{ cursor: 'pointer' }}
+                >
                     <div className="icon-wrapper">
                         <AlertTriangle size={24} />
                     </div>
@@ -24,7 +28,11 @@ const Dashboard = ({ onNavigate }) => {
                     </div>
                 </div>
 
-                <div className="stat-card warning">
+                <div
+                    className="stat-card warning"
+                    onClick={() => onNavigate('inventory', { filter: 'low' })}
+                    style={{ cursor: 'pointer' }}
+                >
                     <div className="icon-wrapper">
                         <PackageX size={24} />
                     </div>
@@ -34,13 +42,17 @@ const Dashboard = ({ onNavigate }) => {
                     </div>
                 </div>
 
-                <div className="stat-card good">
-                    <div className="icon-wrapper">
+                <div
+                    className="stat-card"
+                    style={{ boxShadow: '0 4px 20px -5px rgba(168, 85, 247, 0.4)', cursor: 'pointer' }}
+                    onClick={() => onNavigate('inventory', { filter: 'projected' })}
+                >
+                    <div className="icon-wrapper" style={{ color: '#a855f7', background: 'rgba(168, 85, 247, 0.15)' }}>
                         <Activity size={24} />
                     </div>
                     <div className="stat-info">
-                        <span className="stat-value">Active</span>
-                        <span className="stat-label">System Status</span>
+                        <span className="stat-value">{getStats().projectedEmptyCount}</span>
+                        <span className="stat-label">Empty in &lt; 7 Days</span>
                     </div>
                 </div>
             </div>

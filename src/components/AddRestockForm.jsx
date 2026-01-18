@@ -12,12 +12,17 @@ const AddRestockForm = ({ onComplete }) => {
     const [medName, setMedName] = useState('');
     const [unit, setUnit] = useState('pills');
     const [threshold, setThreshold] = useState(10);
+    const [usageRate, setUsageRate] = useState('');
+    const [usageFrequency, setUsageFrequency] = useState('daily');
+    const [medNotes, setMedNotes] = useState('');
 
     // New Batch State
     const [selectedMedId, setSelectedMedId] = useState('');
     const [quantity, setQuantity] = useState(30);
+    const [dosage, setDosage] = useState('');
     const [expiry, setExpiry] = useState('');
     const [location, setLocation] = useState('Cabinet');
+    const [batchNotes, setBatchNotes] = useState('');
 
     const handleCreateMed = (e) => {
         e.preventDefault();
@@ -26,10 +31,18 @@ const AddRestockForm = ({ onComplete }) => {
             toast.error('Threshold cannot be negative');
             return;
         }
-        const newId = addMedication({ name: medName, defaultUnit: unit, lowStockThreshold: Number(threshold) });
+        const newId = addMedication({
+            name: medName,
+            defaultUnit: unit,
+            lowStockThreshold: Number(threshold),
+            usageRate: usageRate ? Number(usageRate) : null,
+            usageFrequency: usageRate ? usageFrequency : null,
+            notes: medNotes
+        });
         toast.success(`Created ${medName}`);
 
         setMedName('');
+        setMedNotes('');
         // Switch to batch mode for this new med
         // We set the ID, but because 'medications' prop might not have updated in this render cycle yet 
         // (if it comes from context), we need to ensure the select can handle it.
@@ -46,13 +59,17 @@ const AddRestockForm = ({ onComplete }) => {
             medicationId: selectedMedId,
             initialQuantity: Number(quantity),
             expiryDate: expiry,
-            location
+            location,
+            dosage,
+            notes: batchNotes
         });
 
         // Reset fields
         setQuantity(30);
         setExpiry('');
         setLocation('');
+        setDosage('');
+        setBatchNotes('');
         if (onComplete) onComplete();
     };
 
@@ -110,6 +127,45 @@ const AddRestockForm = ({ onComplete }) => {
                         />
                     </div>
 
+                    <div className="form-group">
+                        <label className="form-label">Estimated Usage (Optional)</label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                                type="number"
+                                className="form-input"
+                                value={usageRate}
+                                onChange={e => setUsageRate(e.target.value)}
+                                placeholder="Qty"
+                                min="0"
+                                style={{ flex: 1 }}
+                            />
+                            <select
+                                className="form-input"
+                                value={usageFrequency}
+                                onChange={e => setUsageFrequency(e.target.value)}
+                                style={{ flex: 2 }}
+                            >
+                                <option value="daily">Per Day</option>
+                                <option value="weekly">Per Week</option>
+                                <option value="monthly">Per Month</option>
+                            </select>
+                        </div>
+                        <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: 4 }}>
+                            Used to estimate when you'll run out.
+                        </small>
+                    </div>
+
+                    <div className="form-group">
+                        <label className="form-label">Notes (Optional)</label>
+                        <textarea
+                            className="form-input"
+                            value={medNotes}
+                            onChange={e => setMedNotes(e.target.value)}
+                            placeholder="e.g. Take with food"
+                            rows={2}
+                        />
+                    </div>
+
                     <button type="submit" className="btn primary">
                         Create & Add Stock
                         <ChevronRight size={16} style={{ marginLeft: 8, verticalAlign: 'middle' }} />
@@ -164,12 +220,30 @@ const AddRestockForm = ({ onComplete }) => {
                     </div>
 
                     <div className="form-group">
-                        <label className="form-label">Storage Location (Optional)</label>
+                        <label className="form-label">Dosage (Optional)</label>
+                        <input
+                            className="form-input"
+                            value={dosage}
+                            onChange={e => setDosage(e.target.value)}
+                            placeholder="e.g. 500mg"
+                        />
+                    </div>
+
+                    <div className="form-group">
+                        <label className="form-label">Location & Notes</label>
                         <input
                             className="form-input"
                             value={location}
                             onChange={e => setLocation(e.target.value)}
-                            placeholder="e.g. Bathroom Cabinet"
+                            placeholder="Storage Location (e.g. Cabinet)"
+                            style={{ marginBottom: 8 }}
+                        />
+                        <textarea
+                            className="form-input"
+                            value={batchNotes}
+                            onChange={e => setBatchNotes(e.target.value)}
+                            placeholder="Batch specific notes..."
+                            rows={2}
                         />
                     </div>
 

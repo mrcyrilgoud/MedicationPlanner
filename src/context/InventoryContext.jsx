@@ -116,6 +116,13 @@ export const InventoryProvider = ({ children }) => {
     toast.info('Medication record deleted.');
   };
 
+  const editMedication = (id, updates) => {
+    setMedications(prev => prev.map(m =>
+      m.id === id ? { ...m, ...updates } : m
+    ));
+    toast.success('Medication updated');
+  };
+
   const getStats = () => {
     // Calculate global stats
     const expiringSoon = batches.filter(b => {
@@ -130,7 +137,51 @@ export const InventoryProvider = ({ children }) => {
       return totalStock <= med.lowStockThreshold;
     });
 
-    return { expiringSoonCount: expiringSoon.length, lowStockCount: lowStock.length };
+    const projectedEmpty = medications.filter(med => {
+      const totalStock = batches
+        .filter(b => b.medicationId === med.id)
+        .reduce((sum, b) => sum + b.currentQuantity, 0);
+
+      const runout = calculateRunoutDate(totalStock, med.usageRate, med.usageFrequency);
+      return runout && runout.daysUntilEmpty < 7; // Alert if less than a week
+    });
+
+    return {
+      expiringSoonCount: expiringSoon.length,
+      lowStockCount: lowStock.length,
+      projectedEmptyCount: projectedEmpty.length
+    };
+  };
+
+  const calculateRunoutDate = (totalQuantity, usageRate, usageFrequency, lowThreshold = 0) => {
+    if (!usageRate || Number(usageRate) <= 0) return null;
+
+    let dailyRate = Number(usageRate);
+    if (usageFrequency === 'weekly') dailyRate = dailyRate / 7;
+    if (usageFrequency === 'monthly') dailyRate = dailyRate / 30; // Approx
+
+    if (dailyRate === 0) return null;
+
+    // Date Empty
+    const daysUntilEmpty = totalQuantity / dailyRate;
+    const dateEmpty = new Date();
+    dateEmpty.setDate(dateEmpty.getDate() + daysUntilEmpty);
+
+    // Date Low (when quanity hits threshold)
+    let daysUntilLow = null;
+    let dateLow = null;
+    if (totalQuantity > lowThreshold) {
+      daysUntilLow = (totalQuantity - lowThreshold) / dailyRate;
+      dateLow = new Date();
+      dateLow.setDate(dateLow.getDate() + daysUntilLow);
+    }
+
+    return {
+      dateEmpty,
+      daysUntilEmpty,
+      dateLow,
+      daysUntilLow
+    };
   };
 
   return (
@@ -142,7 +193,9 @@ export const InventoryProvider = ({ children }) => {
       addBatch,
       consumeMedication,
       deleteMedication,
-      getStats
+      editMedication,
+      getStats,
+      calculateRunoutDate
     }}>
       {children}
     </InventoryContext.Provider>
