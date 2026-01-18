@@ -1,0 +1,100 @@
+:root {
+  /* Premium Dark Theme Palette */
+  --bg-app: #09090b; /* Deep Zinc */
+  --bg-card: rgba(24, 24, 27, 0.6); /* Zinc 900 with opacity */
+  --bg-card-hover: rgba(39, 39, 42, 0.8);
+  
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-highlight: rgba(255, 255, 255, 0.05);
+  
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  
+  /* Vibrant Accents */
+  --primary: #3b82f6;
+  --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  --primary-glow: rgba(59, 130, 246, 0.5);
+  
+  --success: #10b981;
+  --success-glow: rgba(16, 185, 129, 0.4);
+  
+  --warning: #f59e0b;
+  --warning-glow: rgba(245, 158, 11, 0.4);
+  
+  --danger: #ef4444;
+  --danger-glow: rgba(239, 68, 68, 0.4);
+  
+  --border-color: #27272a;
+  
+  /* Spacing */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  
+  /* Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  
+  /* Font */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  
+  /* Animation */
+  --ease-elastic: cubic-bezier(0.68, -0.55, 0.27, 1.55);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #000; /* Fallback */
+  background: radial-gradient(circle at top center, #18181b 0%, #09090b 100%);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  user-select: none;
+}
+
+h1, h2, h3, h4 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+input, select {
+  font-family: inherit;
+}
