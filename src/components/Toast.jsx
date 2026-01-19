@@ -4,20 +4,20 @@ import { X, CheckCircle, AlertTriangle, Info, AlertOctagon } from 'lucide-react'
 const Toast = ({ message, type = 'info', onClose }) => {
   const [isExiting, setIsExiting] = useState(false);
 
+  const startExit = React.useCallback(() => {
+    setIsExiting(true);
+    setTimeout(() => {
+      onClose();
+    }, 300);
+  }, [onClose]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       startExit();
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, []);
-
-  const startExit = () => {
-    setIsExiting(true);
-    setTimeout(() => {
-      onClose();
-    }, 300); // Match animation duration
-  };
+  }, [startExit]);
 
   const getIcon = () => {
     switch (type) {
@@ -36,7 +36,7 @@ const Toast = ({ message, type = 'info', onClose }) => {
   };
 
   return (
-    <div 
+    <div
       className={`toast-item ${isExiting ? 'exit' : 'enter'}`}
       style={{
         display: 'flex',
@@ -60,7 +60,7 @@ const Toast = ({ message, type = 'info', onClose }) => {
         {getIcon()}
       </div>
       <span style={{ flex: 1, fontSize: '0.95rem' }}>{message}</span>
-      <button 
+      <button
         onClick={startExit}
         style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 4 }}
       >

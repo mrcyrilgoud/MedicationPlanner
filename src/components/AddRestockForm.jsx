@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useInventory } from '../context/InventoryContext';
-import { ChevronRight, Calendar, Package } from 'lucide-react';
+import { ChevronRight, Calendar, Package, Camera } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { findGenericName } from '../utils/drugApi';
+import { scanReceipt, parseReceiptText } from '../utils/receiptScanner';
 
 const AddRestockForm = ({ onComplete }) => {
-    const { medications, addMedication, addBatch } = useInventory();
+    const { medications, addMedication, addBatch, updateMedicationImage } = useInventory();
     const toast = useToast();
 
     // Levenshtein distance for fuzzy matching
@@ -42,6 +43,7 @@ const AddRestockForm = ({ onComplete }) => {
     const [usageRate, setUsageRate] = useState('');
     const [usageFrequency, setUsageFrequency] = useState('daily');
     const [medNotes, setMedNotes] = useState('');
+    const [medImage, setMedImage] = useState(null); // File object
 
     // Batch State
     const [quantity, setQuantity] = useState(30);
@@ -49,6 +51,45 @@ const AddRestockForm = ({ onComplete }) => {
     const [expiry, setExpiry] = useState('');
     const [location, setLocation] = useState('Cabinet');
     const [batchNotes, setBatchNotes] = useState('');
+
+    // Scan State
+    const [isScanning, setIsScanning] = useState(false);
+    const [scanProgress, setScanProgress] = useState(0);
+    const [scannedItems, setScannedItems] = useState([]);
+    const fileInputRef = useRef(null);
+
+    const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setIsScanning(true);
+        setScanProgress(0);
+        setScannedItems([]);
+
+        try {
+            const text = await scanReceipt(file, (progress) => {
+                setScanProgress(progress);
+            });
+            const found = parseReceiptText(text);
+            if (found.length === 0) {
+                toast.info("No medication names recognized in receipt.");
+            } else {
+                setScannedItems(found);
+                toast.success(`Found ${found.length} items!`);
+            }
+        } catch (error) {
+            console.error(error);
+            toast.error("Scanning failed");
+        } finally {
+            setIsScanning(false);
+        }
+    };
+
+    const applyScannedItem = (item) => {
+        setSearchTerm(item.matchedName);
+        setQuantity(item.quantity);
+        setScannedItems([]);
+    };
 
     // Check for matches when search term changes
     useEffect(() => {
@@ -148,7 +189,14 @@ const AddRestockForm = ({ onComplete }) => {
             } else {
                 toast.success(`Created ${searchTerm}`);
             }
+
+            if (medImage) {
+                updateMedicationImage(targetMedId, medImage);
+            }
+
             setMedNotes('');
+            setMedImage(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         } else {
             targetMedId = matchingMed.id;
         }
@@ -179,6 +227,8 @@ const AddRestockForm = ({ onComplete }) => {
         setPotentialMatch(null);
         setAliasMatch(null);
         setLinkedGroup(null);
+        setMedImage(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
         if (onComplete) onComplete();
     };
 
@@ -207,6 +257,51 @@ const AddRestockForm = ({ onComplete }) => {
     return (
         <div className="add-form-container">
             <form onSubmit={handleUnifiedSubmit}>
+
+                {/* 0. Receipt Scan Button */}
+                <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                    <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        id="receipt-upload"
+                        style={{ display: 'none' }}
+                        onChange={handleFileUpload}
+                    />
+                    <label
+                        htmlFor="receipt-upload"
+                        className="btn secondary"
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                    >
+                        <Camera size={16} />
+                        {isScanning ? `Scanning ${(scanProgress * 100).toFixed(0)}%...` : 'Scan Receipt'}
+                    </label>
+                </div>
+
+                {/* Scanned Results */}
+                {scannedItems.length > 0 && (
+                    <div style={{
+                        marginBottom: '1rem',
+                        padding: '1rem',
+                        border: '1px solid var(--primary)',
+                        borderRadius: 8,
+                        background: 'rgba(59, 130, 246, 0.05)'
+                    }}>
+                        <h4 style={{ marginTop: 0, marginBottom: '0.5rem', color: 'var(--primary)' }}>Detected Items</h4>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            {scannedItems.map((item, idx) => (
+                                <button
+                                    key={idx}
+                                    type="button"
+                                    className="btn secondary"
+                                    style={{ fontSize: '0.9rem', padding: '4px 8px' }}
+                                    onClick={() => applyScannedItem(item)}
+                                >
+                                    {item.matchedName} (Qty: {item.quantity})
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* 1. Name Input / Search */}
                 <div className="form-group">
@@ -385,6 +480,22 @@ const AddRestockForm = ({ onComplete }) => {
                                 placeholder="e.g. Take with food"
                                 rows={2}
                             />
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Medication Picture (Optional)</label>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                className="form-input"
+                                onChange={e => setMedImage(e.target.files[0] || null)}
+                                ref={fileInputRef}
+                            />
+                            {medImage && (
+                                <div style={{ marginTop: 8, fontSize: '0.85rem', color: 'var(--success)' }}>
+                                    ✓ Image selected: {medImage.name}
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

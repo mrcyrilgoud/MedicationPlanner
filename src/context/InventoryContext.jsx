@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useToast } from './ToastContext';
+import { saveImage, getImage, deleteImage as deleteImageFromDb } from '../utils/db';
 
 const InventoryContext = createContext();
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useInventory = () => useContext(InventoryContext);
 
 const STORAGE_KEY = 'med_inventory_v1';
@@ -69,7 +71,7 @@ export const InventoryProvider = ({ children }) => {
     toast.success('Stock added successfully!');
   };
 
-  const consumeMedication = (medicationId, amount, reason = 'taken') => {
+  const consumeMedication = (medicationId, amount) => {
     // 1. Validation: Amount must be positive
     if (amount <= 0) {
       toast.warning('Please enter a valid amount.');
@@ -124,8 +126,10 @@ export const InventoryProvider = ({ children }) => {
   const deleteMedication = (id) => {
     setMedications(prev => prev.filter(m => m.id !== id));
     setBatches(prev => prev.filter(b => b.medicationId !== id));
+    deleteImageFromDb(id).catch(console.error);
     toast.info('Medication record deleted.');
   };
+
 
   const editMedication = (id, updates) => {
     setMedications(prev => prev.map(m =>
@@ -142,6 +146,30 @@ export const InventoryProvider = ({ children }) => {
     editMedication(secondaryId, { groupId: primary.groupId || primary.id });
     toast.success('Medications grouped successfully');
   };
+
+  const updateMedicationImage = async (id, file) => {
+    try {
+      await saveImage(id, file);
+      // Trigger update by editing a timestamp or similar if needed, or just let UI fetch.
+      // We'll update a 'lastUpdated' field to force re-render if components are listening.
+      // Or just simple state update.
+      setMedications(prev => prev.map(m => m.id === id ? { ...m, imageUpdated: Date.now() } : m));
+      toast.success('Image saved');
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to save image');
+    }
+  };
+
+  const getMedicationImage = async (id) => {
+    try {
+      return await getImage(id);
+    } catch (e) {
+      console.error("Error fetching image", e);
+      return null;
+    }
+  };
+
 
   const getStats = () => {
     // Calculate global stats
@@ -216,7 +244,10 @@ export const InventoryProvider = ({ children }) => {
       editMedication,
       getStats,
       calculateRunoutDate,
-      linkMedications
+      linkMedications,
+      updateMedicationImage,
+      getMedicationImage
+
     }}>
       {children}
     </InventoryContext.Provider>

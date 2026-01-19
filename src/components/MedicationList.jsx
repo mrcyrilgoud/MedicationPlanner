@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp, Trash2, Pill, Check, Pencil, X, Save, Link as L
 import { useToast } from '../context/ToastContext';
 
 const MedicationList = ({ filter }) => {
-    const { medications, batches, consumeMedication, deleteMedication, calculateRunoutDate, editMedication, linkMedications } = useInventory();
+    const { medications, batches, consumeMedication, deleteMedication, calculateRunoutDate, editMedication, linkMedications, getMedicationImage } = useInventory();
     const toast = useToast();
     const [expandedId, setExpandedId] = useState(null);
     const [editingId, setEditingId] = useState(null);
@@ -105,13 +105,50 @@ const MedicationList = ({ filter }) => {
         );
     }
 
-    // Manual Grouping State
-    const [linkTargetId, setLinkTargetId] = useState('');
+
+
+    const MedicationImage = ({ medId, size = 50 }) => {
+        const [imageUrl, setImageUrl] = useState(null);
+
+        React.useEffect(() => {
+            let active = true;
+            let currentUrl = null;
+
+            getMedicationImage(medId).then(blob => {
+                if (blob && active) {
+                    currentUrl = URL.createObjectURL(blob);
+                    setImageUrl(currentUrl);
+                }
+            });
+
+            return () => {
+                active = false;
+                if (currentUrl) {
+                    URL.revokeObjectURL(currentUrl);
+                }
+            };
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [medId]);
+
+        if (!imageUrl) return <Pill size={size * 0.5} />;
+
+        return (
+            <img
+                src={imageUrl}
+                alt="Medication"
+                style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    borderRadius: '50%'
+                }}
+            />
+        );
+    };
 
     const renderMedItem = (med, isGroup) => {
         const { totalQty, nextExpiry, medBatches } = getMedStats(med.id);
         const isLow = totalQty <= med.lowStockThreshold;
-        const isExpiring = nextExpiry && ((nextExpiry - new Date()) / (1000 * 60 * 60 * 24) < 30);
 
         const runoutInfo = calculateRunoutDate(totalQty, med.usageRate, med.usageFrequency, med.lowStockThreshold);
         const isRunningOutSoon = runoutInfo && runoutInfo.daysUntilEmpty < 7;
@@ -133,12 +170,19 @@ const MedicationList = ({ filter }) => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
                         <div style={{
                             background: isGroup ? 'transparent' : 'rgba(59, 130, 246, 0.1)',
-                            padding: isGroup ? 0 : 10,
+                            padding: 0, // Remove padding to fit image nicely
                             borderRadius: '50%',
                             color: 'var(--primary)',
-                            opacity: isGroup ? 0.7 : 1
+                            opacity: isGroup ? 0.7 : 1,
+                            width: isGroup ? 32 : 40,
+                            height: isGroup ? 32 : 40,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            overflow: 'hidden', // Clip image
+                            border: isGroup ? 'none' : '1px solid rgba(59, 130, 246, 0.3)'
                         }}>
-                            <Pill size={isGroup ? 16 : 20} />
+                            <MedicationImage medId={med.id} size={isGroup ? 32 : 40} />
                         </div>
                         <div style={{ flex: 1 }}>
                             {isEditing ? (
