@@ -36,8 +36,19 @@ export const InventoryProvider = ({ children }) => {
     }
   }, [medications, batches, loading]);
 
+  // Import alias utility (assuming it's in a utils folder, user might need to move it or I can inline if they prefer single file for now)
+  // Since I created the file, I can import it. But I need to make sure the import path is correct. 
+  // Wait, I cannot edit imports easily with replace_file_content if I am not targeting the top.
+  // I will just add the helper logic here using the utils if I can import it, or just inline the functionality via the helper function.
+  // Actually, I need to add the import statement at the top first. I'll do that in a separate step or try to do it all if I can see the top.
+
   const addMedication = (med) => {
-    const newMed = { ...med, id: crypto.randomUUID() };
+    const newId = crypto.randomUUID();
+    const newMed = {
+      ...med,
+      id: newId,
+      groupId: med.groupId || newId // Default to own ID if no group provided
+    };
     setMedications(prev => [...prev, newMed]);
     return newMed.id;
   };
@@ -123,6 +134,15 @@ export const InventoryProvider = ({ children }) => {
     toast.success('Medication updated');
   };
 
+  const linkMedications = (primaryId, secondaryId) => {
+    const primary = medications.find(m => m.id === primaryId);
+    if (!primary) return;
+
+    // Set secondary's groupId to primary's groupId
+    editMedication(secondaryId, { groupId: primary.groupId || primary.id });
+    toast.success('Medications grouped successfully');
+  };
+
   const getStats = () => {
     // Calculate global stats
     const expiringSoon = batches.filter(b => {
@@ -195,7 +215,8 @@ export const InventoryProvider = ({ children }) => {
       deleteMedication,
       editMedication,
       getStats,
-      calculateRunoutDate
+      calculateRunoutDate,
+      linkMedications
     }}>
       {children}
     </InventoryContext.Provider>
