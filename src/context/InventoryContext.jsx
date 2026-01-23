@@ -1,8 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useToast } from './ToastContext';
+import { storage } from '../storage';
+import { calculateRunoutDate } from '../utils/calculations';
 
 const InventoryContext = createContext();
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useInventory = () => useContext(InventoryContext);
 
 const STORAGE_KEY = 'med_inventory_v1';
@@ -13,43 +16,69 @@ export const InventoryProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const toast = useToast();
 
-  // Load from LocalStorage on mount
+  // Load from Storage on mount
   useEffect(() => {
-    try {
-      const storedData = localStorage.getItem(STORAGE_KEY);
-      if (storedData) {
-        const { meds, batches: storedBatches } = JSON.parse(storedData);
-        setMedications(meds || []);
-        setBatches(storedBatches || []);
+    const loadData = async () => {
+      try {
+        // 1. Try to load from configured storage
+        let loadedMeds = await storage.getMedications();
+        let loadedBatches = await storage.getBatches();
+
+        // 2. Migration Check: If IDB is empty, check legacy LocalStorage
+        // Only if we are using IDB (checked via storage.type or just assumption if empty)
+        if (storage.type === 'idb' && loadedMeds.length === 0 && loadedBatches.length === 0) {
+          const legacyKey = 'med_inventory_v1';
+          const legacyData = localStorage.getItem(legacyKey);
+          if (legacyData) {
+            console.log("Migrating data from LocalStorage to IndexedDB...");
+            const { meds, batches: oldBatches } = JSON.parse(legacyData);
+            if (meds) {
+              for (const m of meds) await storage.saveMedication(m);
+              loadedMeds = meds;
+            }
+            if (oldBatches) {
+              await storage.saveBatches(oldBatches);
+              loadedBatches = oldBatches;
+            }
+            // Optional: Allow user to revert? For now, let's keep it safe and NOT delete legacy yet.
+            // localStorage.removeItem(legacyKey); 
+            toast.success("Database migrated to new system!");
+          }
+        }
+
+        setMedications(loadedMeds || []);
+        setBatches(loadedBatches || []);
+      } catch (e) {
+        console.error("Failed to load inventory", e);
+        toast.error("Failed to load data");
+      } finally {
+        setLoading(false);
       }
-    } catch (e) {
-      console.error("Failed to load inventory", e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    };
+    loadData();
+  }, [toast]); // Added toast as dependency
 
-  // Save to LocalStorage whenever data changes
-  useEffect(() => {
-    if (!loading) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ meds: medications, batches }));
-    }
-  }, [medications, batches, loading]);
-
-  // Import alias utility (assuming it's in a utils folder, user might need to move it or I can inline if they prefer single file for now)
-  // Since I created the file, I can import it. But I need to make sure the import path is correct. 
-  // Wait, I cannot edit imports easily with replace_file_content if I am not targeting the top.
-  // I will just add the helper logic here using the utils if I can import it, or just inline the functionality via the helper function.
-  // Actually, I need to add the import statement at the top first. I'll do that in a separate step or try to do it all if I can see the top.
+  // Removed the auto-save useEffect because we now save on action.
+  // This prevents race conditions and excessive writes.
 
   const addMedication = (med) => {
     const newId = crypto.randomUUID();
     const newMed = {
       ...med,
       id: newId,
-      groupId: med.groupId || newId // Default to own ID if no group provided
+      groupId: med.groupId || newId
     };
+
+    // Optimistic Update
     setMedications(prev => [...prev, newMed]);
+
+    // Async Save
+    storage.saveMedication(newMed).catch(err => {
+      console.error("Save failed", err);
+      toast.error("Failed to save medication");
+      // Rollback? (Complex for now, just alert)
+    });
+
     return newMed.id;
   };
 
@@ -66,20 +95,16 @@ export const InventoryProvider = ({ children }) => {
     };
 
     setBatches(prev => [...prev, newBatch]);
+    storage.saveBatch(newBatch).catch(() => toast.error("Failed to save stock"));
     toast.success('Stock added successfully!');
   };
 
-  const consumeMedication = (medicationId, amount, reason = 'taken') => {
-    // 1. Validation: Amount must be positive
+  const consumeMedication = (medicationId, amount) => {
     if (amount <= 0) {
       toast.warning('Please enter a valid amount.');
       return;
     }
 
-    // 2. FIFO Logic: Find oldest non-empty batches
-    // specific logic: sort by expiryDate ASC
-
-    // Calculate total available first to prevent partial consumption
     const totalAvailable = batches
       .filter(b => b.medicationId === medicationId)
       .reduce((sum, b) => sum + b.currentQuantity, 0);
@@ -90,63 +115,126 @@ export const InventoryProvider = ({ children }) => {
     }
 
     let amountNeeded = amount;
-    const medicationBatches = batches
+    // Clone specifically the batches we need to modify? No, easier to clone all or map.
+    // Let's do immutability correctly.
+    // 1. Get relevant batches sorted
+    let sortedIndices = batches
+      .map((b, i) => ({ ...b, originalIndex: i }))
       .filter(b => b.medicationId === medicationId && b.currentQuantity > 0)
-      .sort((a, b) => new Date(a.expiryDate) - new Date(b.expiryDate));
+      .sort((a, b) => {
+        const dateA = new Date(a.expiryDate);
+        const dateB = new Date(b.expiryDate);
+        if (isNaN(dateA.getTime())) return 1;
+        if (isNaN(dateB.getTime())) return -1;
+        return dateA - dateB;
+      });
 
-    if (medicationBatches.length === 0) {
+    if (sortedIndices.length === 0) {
       toast.error("No stock available!");
       return;
     }
 
-    const updatedBatches = [...batches];
+    const newBatches = [...batches];
+    const changedBatches = [];
 
-    for (let batch of medicationBatches) {
+    for (let batch of sortedIndices) {
       if (amountNeeded <= 0) break;
+      const takeAmount = Math.min(batch.currentQuantity, amountNeeded);
 
-      const batchIndex = updatedBatches.findIndex(b => b.id === batch.id);
-      if (batchIndex === -1) continue;
+      const newBatch = { ...newBatches[batch.originalIndex] };
+      newBatch.currentQuantity -= takeAmount;
 
-      const takeAmount = Math.min(updatedBatches[batchIndex].currentQuantity, amountNeeded);
-
-      updatedBatches[batchIndex] = {
-        ...updatedBatches[batchIndex],
-        currentQuantity: updatedBatches[batchIndex].currentQuantity - takeAmount
-      };
+      newBatches[batch.originalIndex] = newBatch;
+      changedBatches.push(newBatch);
 
       amountNeeded -= takeAmount;
     }
 
-    setBatches(updatedBatches);
+    setBatches(newBatches);
+
+    // Persist changes
+    // Since we might update multiple, we can use saveBatches or loop
+    storage.saveBatches(changedBatches).catch(() => console.error("Batch save failed"));
+
     toast.success('Medication consumed.');
   };
 
   const deleteMedication = (id) => {
     setMedications(prev => prev.filter(m => m.id !== id));
     setBatches(prev => prev.filter(b => b.medicationId !== id));
+
+    storage.deleteMedication(id).catch(() => toast.error("Failed to delete"));
     toast.info('Medication record deleted.');
   };
 
   const editMedication = (id, updates) => {
-    setMedications(prev => prev.map(m =>
-      m.id === id ? { ...m, ...updates } : m
-    ));
-    toast.success('Medication updated');
+    // 1. Compute new state purely
+    let updatedMed = null;
+
+    setMedications(prev => {
+      const next = prev.map(m => {
+        if (m.id === id) {
+          updatedMed = { ...m, ...updates };
+          return updatedMed;
+        }
+        return m;
+      });
+      return next;
+    });
+
+    // 2. Side effect: Save once
+    if (updatedMed) {
+      storage.saveMedication(updatedMed).catch(err => {
+        console.error("Failed to save edit", err);
+        toast.error("Failed to save changes");
+      });
+      toast.success('Medication updated');
+    }
   };
 
   const linkMedications = (primaryId, secondaryId) => {
     const primary = medications.find(m => m.id === primaryId);
     if (!primary) return;
-
-    // Set secondary's groupId to primary's groupId
     editMedication(secondaryId, { groupId: primary.groupId || primary.id });
     toast.success('Medications grouped successfully');
+  };
+
+  const importData = async (data) => {
+    try {
+      if (!data || !Array.isArray(data.medications) || !Array.isArray(data.batches)) {
+        throw new Error("Invalid data format");
+      }
+
+      setLoading(true);
+
+      // Merge logic: currently just adds/overwrites if ID exists
+      for (const m of data.medications) {
+        await storage.saveMedication(m);
+      }
+      await storage.saveBatches(data.batches);
+
+      // Reload state
+      setMedications(await storage.getMedications());
+      setBatches(await storage.getBatches());
+
+      toast.success(`Imported ${data.medications.length} medications and ${data.batches.length} batches.`);
+    } catch (e) {
+      console.error("Import failed", e);
+      toast.error("Failed to import data: " + e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getStats = () => {
     // Calculate global stats
     const expiringSoon = batches.filter(b => {
-      const daysUntil = (new Date(b.expiryDate) - new Date()) / (1000 * 60 * 60 * 24);
+      // Use consistent local midnight time for expiry checks to avoid timezone issues
+      const expiryDate = new Date(b.expiryDate + 'T00:00');
+      const now = new Date();
+      now.setHours(0, 0, 0, 0); // Compare to start of today
+
+      const daysUntil = (expiryDate - now) / (1000 * 60 * 60 * 24);
       return daysUntil < 30 && b.currentQuantity > 0;
     });
 
@@ -173,36 +261,6 @@ export const InventoryProvider = ({ children }) => {
     };
   };
 
-  const calculateRunoutDate = (totalQuantity, usageRate, usageFrequency, lowThreshold = 0) => {
-    if (!usageRate || Number(usageRate) <= 0) return null;
-
-    let dailyRate = Number(usageRate);
-    if (usageFrequency === 'weekly') dailyRate = dailyRate / 7;
-    if (usageFrequency === 'monthly') dailyRate = dailyRate / 30; // Approx
-
-    if (dailyRate === 0) return null;
-
-    // Date Empty
-    const daysUntilEmpty = totalQuantity / dailyRate;
-    const dateEmpty = new Date();
-    dateEmpty.setDate(dateEmpty.getDate() + daysUntilEmpty);
-
-    // Date Low (when quanity hits threshold)
-    let daysUntilLow = null;
-    let dateLow = null;
-    if (totalQuantity > lowThreshold) {
-      daysUntilLow = (totalQuantity - lowThreshold) / dailyRate;
-      dateLow = new Date();
-      dateLow.setDate(dateLow.getDate() + daysUntilLow);
-    }
-
-    return {
-      dateEmpty,
-      daysUntilEmpty,
-      dateLow,
-      daysUntilLow
-    };
-  };
 
   return (
     <InventoryContext.Provider value={{
@@ -216,7 +274,8 @@ export const InventoryProvider = ({ children }) => {
       editMedication,
       getStats,
       calculateRunoutDate,
-      linkMedications
+      linkMedications,
+      importData
     }}>
       {children}
     </InventoryContext.Provider>

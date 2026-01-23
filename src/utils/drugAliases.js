@@ -72,3 +72,28 @@ export const areAliases = (name1, name2) => {
 export const getCanonicalName = (name) => {
     return REVERSE_ALIAS_MAP[name.toLowerCase()] || null;
 }
+
+/**
+ * Finds the best alias match for a search term.
+ * @param {string} term 
+ * @returns {{canonical: string, match: string}|null}
+ */
+export const findBestMatch = (term) => {
+    if (!term) return null;
+    const lower = term.toLowerCase();
+
+    // Exact alias/name match
+    if (REVERSE_ALIAS_MAP[lower]) {
+        return {
+            canonical: REVERSE_ALIAS_MAP[lower],
+            match: lower
+        };
+    }
+
+    // Partial/Fuzzy match could go here
+    return null;
+};
+
+export const getAllAliases = () => {
+    return Object.keys(REVERSE_ALIAS_MAP);
+};

@@ -3,6 +3,7 @@ import Toast from '../components/Toast';
 
 const ToastContext = createContext();
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useToast = () => useContext(ToastContext);
 
 export const ToastProvider = ({ children }) => {
@@ -11,6 +12,7 @@ export const ToastProvider = ({ children }) => {
     const addToast = (message, type = 'info') => {
         const id = crypto.randomUUID();
         setToasts(prev => [...prev, { id, message, type }]);
+        return id;
     };
 
     const removeToast = (id) => {
@@ -21,7 +23,9 @@ export const ToastProvider = ({ children }) => {
         success: (msg) => addToast(msg, 'success'),
         error: (msg) => addToast(msg, 'error'),
         warning: (msg) => addToast(msg, 'warning'),
-        info: (msg) => addToast(msg, 'info')
+        info: (msg) => addToast(msg, 'info'),
+        loading: (msg) => addToast(msg, 'loading'),
+        dismiss: (id) => removeToast(id)
     };
 
     return (

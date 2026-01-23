@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { InventoryProvider } from './context/InventoryContext';
 import { ToastProvider } from './context/ToastContext';
 import Dashboard from './components/Dashboard';
 import MedicationList from './components/MedicationList';
 import AddRestockForm from './components/AddRestockForm';
+
+import DataManagement from './components/DataManagement';
 import ModeSwitcher from './components/ModeSwitcher';
-import { LayoutGrid, List, PlusCircle } from 'lucide-react';
+import { LayoutGrid, List, PlusCircle, Settings } from 'lucide-react';
 import './App.css';
 
 function App() {
@@ -17,6 +19,39 @@ function App() {
     }
     return 'phone';
   });
+
+  const [theme, setTheme] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('app_theme') || 'dark';
+    }
+    return 'dark';
+  });
+
+  // Apply Theme Effect
+  React.useEffect(() => {
+    document.body.setAttribute('data-theme', theme);
+    localStorage.setItem('app_theme', theme);
+  }, [theme]);
+
+  // Handle Window Resize
+  React.useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      let newMode = 'phone';
+      if (width >= 1000) newMode = 'computer';
+      else if (width >= 600) newMode = 'tablet';
+
+      setDeviceMode(prev => {
+        if (prev !== newMode) return newMode;
+        return prev;
+      });
+    };
+
+    window.addEventListener('resize', handleResize);
+    // Call once to ensure correct state on mount (in case hydration differed)
+    handleResize();
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const [currentView, setCurrentView] = useState('dashboard');
   const [viewParams, setViewParams] = useState({});
@@ -65,6 +100,14 @@ function App() {
           <AddRestockForm onComplete={() => handleNavigate('inventory')} />
         </div>
       );
+      case 'settings': return (
+        <DataManagement
+          currentMode={deviceMode}
+          onModeChange={setDeviceMode}
+          currentTheme={theme}
+          onThemeChange={setTheme}
+        />
+      );
       default: return <Dashboard onNavigate={handleNavigate} />;
     }
   };
@@ -74,7 +117,13 @@ function App() {
       <InventoryProvider>
         {/* Mode Switcher Floating */}
         <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 1000 }}>
-          <ModeSwitcher currentMode={deviceMode} onModeChange={setDeviceMode} />
+          <ModeSwitcher
+            currentMode={deviceMode}
+            onModeChange={setDeviceMode}
+            currentTheme={theme}
+            onThemeChange={setTheme}
+            onOpenSettings={() => handleNavigate('settings')}
+          />
         </div>
 
         <div className={`app-container mode-${deviceMode}`}>
@@ -107,6 +156,14 @@ function App() {
                   <PlusCircle size={20} />
                   <span>Add</span>
                 </button>
+                <div style={{ flex: 1 }}></div>
+                <button
+                  className={`nav-item-side ${currentView === 'settings' ? 'active' : ''}`}
+                  onClick={() => setCurrentView('settings')}
+                >
+                  <Settings size={20} />
+                  <span>Settings</span>
+                </button>
               </nav>
             </aside>
           )}
@@ -136,8 +193,14 @@ function App() {
                 className={`nav-item ${currentView === 'add' ? 'active' : ''}`}
                 onClick={() => setCurrentView('add')}
               >
-                <PlusCircle size={24} />
                 <span>Add</span>
+              </button>
+              <button
+                className={`nav-item ${currentView === 'settings' ? 'active' : ''}`}
+                onClick={() => setCurrentView('settings')}
+              >
+                <Settings size={24} />
+                <span>Settings</span>
               </button>
             </nav>
           )}

@@ -4,7 +4,7 @@ import { AlertTriangle, PackageX, Activity } from 'lucide-react';
 
 const Dashboard = ({ onNavigate }) => {
     const { getStats } = useInventory();
-    const { expiringSoonCount, lowStockCount } = getStats();
+    const { expiringSoonCount, lowStockCount, projectedEmptyCount } = getStats();
 
     return (
         <div className="dashboard">
@@ -51,7 +51,7 @@ const Dashboard = ({ onNavigate }) => {
                         <Activity size={24} />
                     </div>
                     <div className="stat-info">
-                        <span className="stat-value">{getStats().projectedEmptyCount}</span>
+                        <span className="stat-value">{projectedEmptyCount}</span>
                         <span className="stat-label">Empty in &lt; 7 Days</span>
                     </div>
                 </div>

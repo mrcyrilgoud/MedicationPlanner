@@ -1,29 +1,33 @@
-import React, { useEffect, useState } from 'react';
-import { X, CheckCircle, AlertTriangle, Info, AlertOctagon } from 'lucide-react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { X, CheckCircle, AlertTriangle, Info, AlertOctagon, Loader2 } from 'lucide-react';
 
 const Toast = ({ message, type = 'info', onClose }) => {
   const [isExiting, setIsExiting] = useState(false);
 
+  const startExit = useCallback(() => {
+    setIsExiting(true);
+    setTimeout(() => {
+      onClose();
+    }, 300);
+  }, [onClose]);
+
   useEffect(() => {
+    // Auto-close unless it's a loading toast
+    if (type === 'loading') return;
+
     const timer = setTimeout(() => {
       startExit();
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, []);
-
-  const startExit = () => {
-    setIsExiting(true);
-    setTimeout(() => {
-      onClose();
-    }, 300); // Match animation duration
-  };
+  }, [startExit, type]);
 
   const getIcon = () => {
     switch (type) {
       case 'success': return <CheckCircle size={20} />;
       case 'warning': return <AlertTriangle size={20} />;
       case 'error': return <AlertOctagon size={20} />;
+      case 'loading': return <Loader2 size={20} className="spin" />;
       default: return <Info size={20} />;
     }
   };
@@ -36,7 +40,7 @@ const Toast = ({ message, type = 'info', onClose }) => {
   };
 
   return (
-    <div 
+    <div
       className={`toast-item ${isExiting ? 'exit' : 'enter'}`}
       style={{
         display: 'flex',
@@ -60,7 +64,7 @@ const Toast = ({ message, type = 'info', onClose }) => {
         {getIcon()}
       </div>
       <span style={{ flex: 1, fontSize: '0.95rem' }}>{message}</span>
-      <button 
+      <button
         onClick={startExit}
         style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 4 }}
       >
