@@ -380,16 +380,23 @@
   gap: var(--space-md);
 }
 
-.mode-tablet .medication-list,
-.mode-computer .medication-list {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+.medication-groups {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-md);
 }
 
+.mode-tablet .medication-groups,
+.mode-computer .medication-groups {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-md);
+  align-items: start;
+}
+
 @media (min-width: 1200px) {
-  .mode-computer .medication-list {
-    grid-template-columns: repeat(3, 1fr);
+  .mode-computer .medication-groups {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   }
 }
 

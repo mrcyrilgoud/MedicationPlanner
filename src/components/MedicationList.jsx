@@ -201,7 +201,7 @@ const MedicationList = ({ filter }) => {
                     {searchTerm ? 'No matches found.' : 'No medications found. Add some!'}
                 </div>
             ) : (
-                <div className="medication-groups" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div className="medication-groups">
                     {groupedMedications.map(group => {
                         const isGroup = group.length > 1;
                         return (

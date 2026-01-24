@@ -7,7 +7,8 @@ import AddRestockForm from './components/AddRestockForm';
 
 import DataManagement from './components/DataManagement';
 import ModeSwitcher from './components/ModeSwitcher';
-import { LayoutGrid, List, PlusCircle, Settings } from 'lucide-react';
+import HistoryView from './components/HistoryView';
+import { LayoutGrid, List, PlusCircle, Settings, History } from 'lucide-react';
 import './App.css';
 
 function App() {
@@ -100,6 +101,7 @@ function App() {
           <AddRestockForm onComplete={() => handleNavigate('inventory')} />
         </div>
       );
+      case 'history': return <HistoryView />;
       case 'settings': return (
         <DataManagement
           currentMode={deviceMode}
@@ -156,6 +158,13 @@ function App() {
                   <PlusCircle size={20} />
                   <span>Add</span>
                 </button>
+                <button
+                  className={`nav-item-side ${currentView === 'history' ? 'active' : ''}`}
+                  onClick={() => setCurrentView('history')}
+                >
+                  <History size={20} />
+                  <span>History</span>
+                </button>
                 <div style={{ flex: 1 }}></div>
                 <button
                   className={`nav-item-side ${currentView === 'settings' ? 'active' : ''}`}
@@ -194,6 +203,13 @@ function App() {
                 onClick={() => setCurrentView('add')}
               >
                 <span>Add</span>
+              </button>
+              <button
+                className={`nav-item ${currentView === 'history' ? 'active' : ''}`}
+                onClick={() => setCurrentView('history')}
+              >
+                <History size={24} />
+                <span>History</span>
               </button>
               <button
                 className={`nav-item ${currentView === 'settings' ? 'active' : ''}`}

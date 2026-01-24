@@ -1,10 +1,10 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'MedInventoryDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const dbPromise = openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
+    upgrade(db, oldVersion, newVersion, transaction) {
         // Store for medications
         if (!db.objectStoreNames.contains('medications')) {
             const medStore = db.createObjectStore('medications', { keyPath: 'id' });
@@ -18,14 +18,15 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
             batchStore.createIndex('expiryDate', 'expiryDate', { unique: false });
         }
 
-        // Store for images (separate store to keep meds light if needed, though usually fine inline if careful. 
-        // But separating them allows lazy loading images)
-        // Actually, for simplicity in this V1 migration, let's keep images inside the medication object 
-        // BUT since we want to avoid 5MB limit, IDB handles large objects fine. 
-        // However, if we LIST medications, we don't want to load 100MB of images. 
-        // So let's create a separate object store for images.
+        // Store for images
         if (!db.objectStoreNames.contains('images')) {
-            db.createObjectStore('images', { keyPath: 'id' }); // id can be custom generated or link to medId
+            db.createObjectStore('images', { keyPath: 'id' });
+        }
+
+        // Store for history logs
+        if (!db.objectStoreNames.contains('history')) {
+            const historyStore = db.createObjectStore('history', { keyPath: 'id' });
+            historyStore.createIndex('timestamp', 'timestamp', { unique: false });
         }
     },
 });
@@ -56,6 +57,10 @@ export const idbAdapter = {
         await tx.done;
     },
 
+    async getHistoryCount() {
+        return (await dbPromise).count('history');
+    },
+
     // --- Batches ---
     async getBatches() {
         return (await dbPromise).getAll('batches');
@@ -75,10 +80,60 @@ export const idbAdapter = {
         return (await dbPromise).delete('batches', id);
     },
 
+    // --- History ---
+    async addHistoryEntry(entry) {
+        return (await dbPromise).put('history', entry);
+    },
+
+    async getHistory({ limit = 50, offset = 0 } = {}) {
+        const db = await dbPromise;
+        const tx = db.transaction('history', 'readonly');
+        const index = tx.store.index('timestamp');
+
+        // We want newest first, so we iterate backwards (prev).
+        // Since we want pagination, we can advance the cursor by 'offset'
+        // and then take 'limit' items.
+
+        const entries = [];
+        let cursor = await index.openCursor(null, 'prev');
+
+        if (offset > 0 && cursor) {
+            await cursor.advance(offset);
+        }
+
+        while (cursor && entries.length < limit) {
+            entries.push(cursor.value);
+            cursor = await cursor.continue();
+        }
+
+        return entries;
+    },
+
+    async deleteHistoryEntry(id) {
+        return (await dbPromise).delete('history', id);
+    },
+
+    async updateHistoryEntry(id, updates) {
+        const db = await dbPromise;
+        const tx = db.transaction('history', 'readwrite');
+        const entry = await tx.store.get(id);
+        if (entry) {
+            // Merging generic data and 'data' object
+            const updated = { ...entry, ...updates };
+            // Deep merge 'data' if present in updates
+            if (updates.data) {
+                updated.data = { ...entry.data, ...updates.data };
+            }
+            await tx.store.put(updated);
+        }
+        await tx.done;
+    },
+
     // --- Migration Helper ---
     async clearAll() {
         const db = await dbPromise;
         await db.clear('medications');
         await db.clear('batches');
+        await db.clear('history');
     }
 };

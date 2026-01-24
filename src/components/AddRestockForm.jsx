@@ -163,7 +163,7 @@ const AddRestockForm = ({ onComplete }) => {
             location,
             dosage,
             notes: batchNotes
-        });
+        }, matchingMed ? matchingMed.name : searchTerm);
 
         // Reset
         setSearchTerm('');

@@ -61,6 +61,22 @@ export const InventoryProvider = ({ children }) => {
   // Removed the auto-save useEffect because we now save on action.
   // This prevents race conditions and excessive writes.
 
+  const logActivity = async (actionType, data) => {
+    try {
+      const entry = {
+        id: crypto.randomUUID(),
+        actionType, // 'add_medication', 'add_stock', 'consume', 'edit', 'delete'
+        data,       // Buffered object with details
+        timestamp: new Date().toISOString(),
+        // Fallback for older UI
+        details: typeof data === 'string' ? data : ''
+      };
+      await storage.addHistoryEntry(entry);
+    } catch (e) {
+      console.error("Failed to log history", e);
+    }
+  };
+
   const addMedication = (med) => {
     const newId = crypto.randomUUID();
     const newMed = {
@@ -73,7 +89,14 @@ export const InventoryProvider = ({ children }) => {
     setMedications(prev => [...prev, newMed]);
 
     // Async Save
-    storage.saveMedication(newMed).catch(err => {
+    storage.saveMedication(newMed).then(() => {
+      // Log with ID for revert capability
+      logActivity('add_medication', {
+        medicationId: newMed.id,
+        name: newMed.name,
+        unit: newMed.defaultUnit
+      });
+    }).catch(err => {
       console.error("Save failed", err);
       toast.error("Failed to save medication");
       // Rollback? (Complex for now, just alert)
@@ -82,7 +105,7 @@ export const InventoryProvider = ({ children }) => {
     return newMed.id;
   };
 
-  const addBatch = (batch) => {
+  const addBatch = (batch, medNameOverride = null) => {
     if (Number(batch.initialQuantity) <= 0) {
       toast.error('Quantity must be greater than 0');
       return;
@@ -95,7 +118,15 @@ export const InventoryProvider = ({ children }) => {
     };
 
     setBatches(prev => [...prev, newBatch]);
-    storage.saveBatch(newBatch).catch(() => toast.error("Failed to save stock"));
+    storage.saveBatch(newBatch).then(() => {
+      // Use override if provided (fixes race condition in new med creation)
+      let name = medNameOverride;
+      if (!name) {
+        const med = medications.find(m => m.id === batch.medicationId);
+        name = med ? med.name : 'Unknown Med';
+      }
+      logActivity('add_stock', { medicationId: batch.medicationId, name, quantity: batch.initialQuantity });
+    }).catch(() => toast.error("Failed to save stock"));
     toast.success('Stock added successfully!');
   };
 
@@ -154,7 +185,13 @@ export const InventoryProvider = ({ children }) => {
 
     // Persist changes
     // Since we might update multiple, we can use saveBatches or loop
-    storage.saveBatches(changedBatches).catch(() => console.error("Batch save failed"));
+    // Persist changes
+    // Since we might update multiple, we can use saveBatches or loop
+    storage.saveBatches(changedBatches).then(() => {
+      const med = medications.find(m => m.id === medicationId);
+      const name = med ? med.name : 'Unknown';
+      logActivity('consume', { medicationId, name, amount });
+    }).catch(() => console.error("Batch save failed"));
 
     toast.success('Medication consumed.');
   };
@@ -163,7 +200,12 @@ export const InventoryProvider = ({ children }) => {
     setMedications(prev => prev.filter(m => m.id !== id));
     setBatches(prev => prev.filter(b => b.medicationId !== id));
 
-    storage.deleteMedication(id).catch(() => toast.error("Failed to delete"));
+    storage.deleteMedication(id).then(() => {
+      // We don't have the name here easily unless we grabbed it before delete.
+      // But state update is sync, so 'medications' might still have it in this render cycle?
+      // No, setMedications is async-ish. Let's rely on passed args or just say "Deleted medication".
+      logActivity('delete', { id });
+    }).catch(() => toast.error("Failed to delete"));
     toast.info('Medication record deleted.');
   };
 
@@ -184,7 +226,9 @@ export const InventoryProvider = ({ children }) => {
 
     // 2. Side effect: Save once
     if (updatedMed) {
-      storage.saveMedication(updatedMed).catch(err => {
+      storage.saveMedication(updatedMed).then(() => {
+        logActivity('edit', { name: updatedMed.name, updates });
+      }).catch(err => {
         console.error("Failed to save edit", err);
         toast.error("Failed to save changes");
       });
@@ -262,6 +306,78 @@ export const InventoryProvider = ({ children }) => {
   };
 
 
+
+
+  const getHistoryLog = async (pagination) => {
+    return await storage.getHistory(pagination);
+  };
+
+  const getHistoryTotalCount = async () => {
+    return await storage.getHistoryCount();
+  };
+
+  const revertHistoryAction = async (item) => {
+    try {
+      if (item.actionType === 'consume') {
+        const { medicationId, amount, name } = item.data;
+        if (!medicationId || !amount) throw new Error("Missing data for revert");
+
+        // Restore stock by creating a 'Restored' batch or updating existing
+        const targetBatch = batches
+          .filter(b => b.medicationId === medicationId)
+          .sort((a, b) => new Date(b.expiryDate) - new Date(a.expiryDate))[0];
+
+        if (targetBatch) {
+          const updatedBatch = { ...targetBatch, currentQuantity: targetBatch.currentQuantity + Number(amount) };
+          setBatches(prev => prev.map(b => b.id === targetBatch.id ? updatedBatch : b));
+          await storage.saveBatch(updatedBatch);
+        } else {
+          const newBatch = {
+            id: crypto.randomUUID(),
+            medicationId,
+            initialQuantity: amount,
+            currentQuantity: amount,
+            expiryDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
+            location: 'Restored',
+            dateAdded: new Date().toISOString()
+          };
+          setBatches(prev => [...prev, newBatch]);
+          await storage.saveBatch(newBatch);
+        }
+
+        await storage.deleteHistoryEntry(item.id);
+        toast.success(`Reverted usage of ${amount} ${name}`);
+
+      } else if (item.actionType === 'add_medication') {
+        const { medicationId, name } = item.data;
+
+        const created = new Date(item.timestamp);
+        const diff = new Date() - created;
+        if (diff > 24 * 60 * 60 * 1000) {
+          toast.error("Cannot revert: Creation was more than 24h ago.");
+          return;
+        }
+
+        await deleteMedication(medicationId);
+        await storage.deleteHistoryEntry(item.id);
+        toast.success(`Reverted creation of ${name}`);
+      }
+    } catch (e) {
+      console.error("Revert failed", e);
+      toast.error("Failed to revert action");
+    }
+  };
+
+  const updateHistoryEntry = async (id, newData) => {
+    try {
+      await storage.updateHistoryEntry(id, newData);
+      toast.success("History record updated");
+    } catch (e) {
+      console.error("Update failed", e);
+      toast.error("Failed to update record");
+    }
+  };
+
   return (
     <InventoryContext.Provider value={{
       medications,
@@ -275,7 +391,11 @@ export const InventoryProvider = ({ children }) => {
       getStats,
       calculateRunoutDate,
       linkMedications,
-      importData
+      importData,
+      getHistoryLog,
+      getHistoryTotalCount,
+      revertHistoryAction,
+      updateHistoryEntry
     }}>
       {children}
     </InventoryContext.Provider>

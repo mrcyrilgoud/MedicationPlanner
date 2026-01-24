@@ -40,6 +40,29 @@ export const storage = {
         return adapter.deleteBatch(id);
     },
 
+    // --- History ---
+    async addHistoryEntry(entry) {
+        if (adapter.addHistoryEntry) return adapter.addHistoryEntry(entry);
+    },
+
+    async getHistory(pagination) {
+        if (adapter.getHistory) return adapter.getHistory(pagination);
+        return [];
+    },
+
+    async getHistoryCount() {
+        if (adapter.getHistoryCount) return adapter.getHistoryCount();
+        return 0;
+    },
+
+    async deleteHistoryEntry(id) {
+        if (adapter.deleteHistoryEntry) return adapter.deleteHistoryEntry(id);
+    },
+
+    async updateHistoryEntry(id, data) {
+        if (adapter.updateHistoryEntry) return adapter.updateHistoryEntry(id, data);
+    },
+
     // Migration / Debug
     async clear() {
         if (adapter.clearAll) return adapter.clearAll();
