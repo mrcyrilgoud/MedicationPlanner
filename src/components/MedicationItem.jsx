@@ -4,8 +4,9 @@ import { useInventory } from '../context/InventoryContext';
 import { useToast } from '../context/ToastContext';
 import { calculateRunoutDate } from '../utils/calculations';
 import { getSmartLink } from '../utils/drugApi';
+import ImageModal from './ImageModal';
 
-const MedicationItem = ({
+const MedicationItem = React.memo(({
     med,
     isGroup,
     medStats,
@@ -19,6 +20,7 @@ const MedicationItem = ({
     const { consumeMedication } = useInventory();
     const toast = useToast();
     const [consumeAmount, setConsumeAmount] = useState('');
+    const [selectedImage, setSelectedImage] = useState(null);
 
     const { totalQty, nextExpiry, medBatches } = medStats || { totalQty: 0, nextExpiry: null, medBatches: [] };
     const isLow = totalQty <= med.lowStockThreshold;
@@ -47,6 +49,12 @@ const MedicationItem = ({
 
     return (
         <div className="med-item" style={isGroup ? { border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', borderRadius: 0, margin: 0 } : {}}>
+            <ImageModal
+                isOpen={!!selectedImage}
+                imageUrl={selectedImage}
+                onClose={() => setSelectedImage(null)}
+            />
+
             {/* Header / Summary Row */}
             <div
                 onClick={() => !isEditing && onToggleExpand(med.id)}
@@ -244,10 +252,7 @@ const MedicationItem = ({
                                             border: '1px solid var(--border-color)',
                                             cursor: 'pointer'
                                         }}
-                                        onClick={() => {
-                                            const w = window.open("");
-                                            w.document.write('<img src="' + img + '" style="max-width:100%"/>');
-                                        }}
+                                        onClick={() => setSelectedImage(img)}
                                         title="Click to view full size"
                                     />
                                 ))}
@@ -305,6 +310,7 @@ const MedicationItem = ({
             )}
         </div>
     );
-};
+});
 
 export default MedicationItem;
+

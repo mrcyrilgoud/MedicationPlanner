@@ -30,7 +30,7 @@ export const InventoryProvider = ({ children }) => {
           const legacyKey = 'med_inventory_v1';
           const legacyData = localStorage.getItem(legacyKey);
           if (legacyData) {
-            console.log("Migrating data from LocalStorage to IndexedDB...");
+            // console.log("Migrating data from LocalStorage to IndexedDB...");
             const { meds, batches: oldBatches } = JSON.parse(legacyData);
             if (meds) {
               for (const m of meds) await storage.saveMedication(m);

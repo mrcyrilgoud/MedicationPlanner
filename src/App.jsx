@@ -4,11 +4,12 @@ import { ToastProvider } from './context/ToastContext';
 import Dashboard from './components/Dashboard';
 import MedicationList from './components/MedicationList';
 import AddRestockForm from './components/AddRestockForm';
+import PrescriptionGenerator from './components/PrescriptionGenerator';
 
 import DataManagement from './components/DataManagement';
 import ModeSwitcher from './components/ModeSwitcher';
 import HistoryView from './components/HistoryView';
-import { LayoutGrid, List, PlusCircle, Settings, History } from 'lucide-react';
+import { LayoutGrid, List, PlusCircle, Settings, History, ScrollText } from 'lucide-react';
 import './App.css';
 
 function App() {
@@ -102,6 +103,11 @@ function App() {
         </div>
       );
       case 'history': return <HistoryView />;
+      case 'shopping-list': return (
+        <div style={{ paddingTop: '1rem' }}>
+          <PrescriptionGenerator />
+        </div>
+      );
       case 'settings': return (
         <DataManagement
           currentMode={deviceMode}
@@ -118,7 +124,7 @@ function App() {
     <ToastProvider>
       <InventoryProvider>
         {/* Mode Switcher Floating */}
-        <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 1000 }}>
+        <div className="no-print" style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 1000 }}>
           <ModeSwitcher
             currentMode={deviceMode}
             onModeChange={setDeviceMode}
@@ -132,7 +138,7 @@ function App() {
 
           {/* Sidebar for Computer Mode */}
           {deviceMode === 'computer' && (
-            <aside className="sidebar">
+            <aside className="sidebar no-print">
               <div className="sidebar-header">
                 <h3>MedPlan</h3>
               </div>
@@ -159,6 +165,13 @@ function App() {
                   <span>Add</span>
                 </button>
                 <button
+                  className={`nav-item-side ${currentView === 'shopping-list' ? 'active' : ''}`}
+                  onClick={() => setCurrentView('shopping-list')}
+                >
+                  <ScrollText size={20} />
+                  <span>Shop List</span>
+                </button>
+                <button
                   className={`nav-item-side ${currentView === 'history' ? 'active' : ''}`}
                   onClick={() => setCurrentView('history')}
                 >
@@ -183,7 +196,7 @@ function App() {
 
           {/* Bottom Nav for Phone/Tablet */}
           {deviceMode !== 'computer' && (
-            <nav className="bottom-nav">
+            <nav className="bottom-nav no-print">
               <button
                 className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}
                 onClick={() => setCurrentView('dashboard')}
@@ -202,7 +215,15 @@ function App() {
                 className={`nav-item ${currentView === 'add' ? 'active' : ''}`}
                 onClick={() => setCurrentView('add')}
               >
+                <PlusCircle size={24} />
                 <span>Add</span>
+              </button>
+              <button
+                className={`nav-item ${currentView === 'shopping-list' ? 'active' : ''}`}
+                onClick={() => setCurrentView('shopping-list')}
+              >
+                <ScrollText size={24} />
+                <span>Shop</span>
               </button>
               <button
                 className={`nav-item ${currentView === 'history' ? 'active' : ''}`}

@@ -442,3 +442,55 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   border: 1px solid var(--glass-border);
 }
+/* Print Styles */
+@media print {
+  /* Hide non-printable elements */
+  .no-print,
+  .sidebar,
+  .bottom-nav,
+  .mode-switcher,
+  .sidebar-header,
+  .nav-item-side,
+  .nav-item,
+  button {
+    display: none !important;
+  }
+
+  /* Reset container styles for print */
+  body, 
+  .app-container,
+  .main-content {
+    background: white !important;
+    color: black !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    position: static !important;
+    display: block !important;
+    max-width: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    border: none !important;
+  }
+
+  /* Show print-only elements */
+  .print-only {
+    display: block !important;
+    padding: 2cm;
+  }
+
+  /* Hide print-only elements from screen */
+  .selection-list, 
+  .prescription-container > .no-print {
+    display: none !important;
+  }
+}
+
+/* Screen Styles for Print elements */
+@media screen {
+  .print-only {
+    display: none;
+  }
+}

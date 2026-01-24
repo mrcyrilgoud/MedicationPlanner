@@ -83,17 +83,29 @@ const MedicationList = ({ filter }) => {
     };
 
     const handleLink = (targetId) => {
-        if (window.confirm(`Group into the selected medication's group?`)) {
-            linkMedications(targetId, editingId);
-            setEditingId(null);
-        }
+        setModalConfig({
+            title: 'Group Medications',
+            message: "Group this into the selected medication's group?",
+            type: 'info',
+            confirmText: 'Group',
+            onConfirm: () => {
+                linkMedications(targetId, editingId);
+                setEditingId(null);
+            }
+        });
     };
 
     const handleUngroup = () => {
-        if (window.confirm("Ungroup this medication?")) {
-            editMedication(editingId, { groupId: editingId });
-            setEditingId(null);
-        }
+        setModalConfig({
+            title: 'Ungroup Medication',
+            message: "Remove this medication from its group?",
+            type: 'warning',
+            confirmText: 'Ungroup',
+            onConfirm: () => {
+                editMedication(editingId, { groupId: editingId });
+                setEditingId(null);
+            }
+        });
     };
 
     // --- Stats & Grouping ---
@@ -243,4 +255,5 @@ const MedicationList = ({ filter }) => {
 };
 
 export default MedicationList;
+
 

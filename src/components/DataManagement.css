@@ -1,0 +1,69 @@
+.data-management-container {
+    padding: 1rem;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.dm-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+}
+
+.dm-card {
+    background: rgba(255, 255, 255, 0.03);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 1rem;
+}
+
+.dm-card h3 {
+    margin-top: 0;
+    font-size: 1.1rem;
+}
+
+.dm-card p {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+.dm-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 2rem;
+}
+
+.icon-radio-label {
+    margin-bottom: 10px;
+    display: block;
+}
+
+.icon-radio-group {
+    display: inline-flex;
+    padding: 4px;
+    gap: 4px;
+}
+
+.restore-warning {
+    padding: 1rem;
+    background: rgba(234, 179, 8, 0.1);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+    display: flex;
+    gap: 1rem;
+    align-items: start;
+}
+
+.restore-warning span {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
