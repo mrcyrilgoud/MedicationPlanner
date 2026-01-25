@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'MedInventoryDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const dbPromise = openDB(DB_NAME, DB_VERSION, {
     upgrade(db, oldVersion, newVersion, transaction) {

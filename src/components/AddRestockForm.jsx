@@ -84,7 +84,7 @@ const AddRestockForm = ({ onComplete }) => {
 
     }, [searchTerm, medications]);
 
-    const handleUnifiedSubmit = (e) => {
+    const handleUnifiedSubmit = async (e) => {
         e.preventDefault();
 
         let targetMedId;
@@ -116,7 +116,7 @@ const AddRestockForm = ({ onComplete }) => {
                 medData.groupId = linkedGroup.groupId || linkedGroup.id;
             }
 
-            targetMedId = addMedication(medData);
+            targetMedId = await addMedication(medData);
 
             let msg = 'Created ' + searchTerm;
             if (linkedGroup) {
@@ -156,7 +156,7 @@ const AddRestockForm = ({ onComplete }) => {
             quantityToStore = quantityToStore * finalPuffsPerCanister;
         }
 
-        addBatch({
+        await addBatch({
             medicationId: targetMedId,
             initialQuantity: quantityToStore,
             expiryDate: expiry,

@@ -77,7 +77,7 @@ export const InventoryProvider = ({ children }) => {
     }
   };
 
-  const addMedication = (med) => {
+  const addMedication = async (med) => {
     const newId = crypto.randomUUID();
     const newMed = {
       ...med,
@@ -89,26 +89,25 @@ export const InventoryProvider = ({ children }) => {
     setMedications(prev => [...prev, newMed]);
 
     // Async Save
-    storage.saveMedication(newMed).then(() => {
-      // Log with ID for revert capability
-      logActivity('add_medication', {
+    try {
+      await storage.saveMedication(newMed);
+      await logActivity('add_medication', {
         medicationId: newMed.id,
         name: newMed.name,
         unit: newMed.defaultUnit
       });
-    }).catch(err => {
+      return newMed.id;
+    } catch (err) {
       console.error("Save failed", err);
       toast.error("Failed to save medication");
-      // Rollback? (Complex for now, just alert)
-    });
-
-    return newMed.id;
+      throw err;
+    }
   };
 
-  const addBatch = (batch, medNameOverride = null) => {
+  const addBatch = async (batch, medNameOverride = null) => {
     if (Number(batch.initialQuantity) <= 0) {
       toast.error('Quantity must be greater than 0');
-      return;
+      throw new Error('Quantity must be greater than 0');
     }
     const newBatch = {
       ...batch,
@@ -118,19 +117,24 @@ export const InventoryProvider = ({ children }) => {
     };
 
     setBatches(prev => [...prev, newBatch]);
-    storage.saveBatch(newBatch).then(() => {
+
+    try {
+      await storage.saveBatch(newBatch);
       // Use override if provided (fixes race condition in new med creation)
       let name = medNameOverride;
       if (!name) {
         const med = medications.find(m => m.id === batch.medicationId);
         name = med ? med.name : 'Unknown Med';
       }
-      logActivity('add_stock', { medicationId: batch.medicationId, name, quantity: batch.initialQuantity });
-    }).catch(() => toast.error("Failed to save stock"));
-    toast.success('Stock added successfully!');
+      await logActivity('add_stock', { medicationId: batch.medicationId, name, quantity: batch.initialQuantity });
+      toast.success('Stock added successfully!');
+    } catch (e) {
+      toast.error("Failed to save stock");
+      throw e;
+    }
   };
 
-  const consumeMedication = (medicationId, amount) => {
+  const consumeMedication = async (medicationId, amount) => {
     if (amount <= 0) {
       toast.warning('Please enter a valid amount.');
       return;
@@ -184,32 +188,33 @@ export const InventoryProvider = ({ children }) => {
     setBatches(newBatches);
 
     // Persist changes
-    // Since we might update multiple, we can use saveBatches or loop
-    // Persist changes
-    // Since we might update multiple, we can use saveBatches or loop
-    storage.saveBatches(changedBatches).then(() => {
+    try {
+      await storage.saveBatches(changedBatches);
       const med = medications.find(m => m.id === medicationId);
       const name = med ? med.name : 'Unknown';
-      logActivity('consume', { medicationId, name, amount });
-    }).catch(() => console.error("Batch save failed"));
-
-    toast.success('Medication consumed.');
+      await logActivity('consume', { medicationId, name, amount });
+      toast.success('Medication consumed.');
+    } catch (e) {
+      console.error("Batch save failed", e);
+      toast.error("Failed to update stock");
+      // Ideally revert state here, but omitting for brevity
+    }
   };
 
-  const deleteMedication = (id) => {
+  const deleteMedication = async (id) => {
     setMedications(prev => prev.filter(m => m.id !== id));
     setBatches(prev => prev.filter(b => b.medicationId !== id));
 
-    storage.deleteMedication(id).then(() => {
-      // We don't have the name here easily unless we grabbed it before delete.
-      // But state update is sync, so 'medications' might still have it in this render cycle?
-      // No, setMedications is async-ish. Let's rely on passed args or just say "Deleted medication".
-      logActivity('delete', { id });
-    }).catch(() => toast.error("Failed to delete"));
-    toast.info('Medication record deleted.');
+    try {
+      await storage.deleteMedication(id);
+      await logActivity('delete', { id });
+      toast.info('Medication record deleted.');
+    } catch (e) {
+      toast.error("Failed to delete");
+    }
   };
 
-  const editMedication = (id, updates) => {
+  const editMedication = async (id, updates) => {
     // 1. Compute new state purely
     let updatedMed = null;
 
@@ -226,13 +231,14 @@ export const InventoryProvider = ({ children }) => {
 
     // 2. Side effect: Save once
     if (updatedMed) {
-      storage.saveMedication(updatedMed).then(() => {
-        logActivity('edit', { name: updatedMed.name, updates });
-      }).catch(err => {
+      try {
+        await storage.saveMedication(updatedMed);
+        await logActivity('edit', { name: updatedMed.name, updates });
+        toast.success('Medication updated');
+      } catch (err) {
         console.error("Failed to save edit", err);
         toast.error("Failed to save changes");
-      });
-      toast.success('Medication updated');
+      }
     }
   };
 
