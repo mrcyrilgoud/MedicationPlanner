@@ -1,15 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useInventory } from '../context/InventoryContext';
-import { useToast } from '../context/ToastContext';
 import { Printer, ShoppingCart, Calculator, StickyNote } from 'lucide-react';
 
 const PrescriptionGenerator = () => {
   const { medications, batches } = useInventory();
-  const toast = useToast();
 
   // State 
   const [globalMonths, setGlobalMonths] = useState(1);
   const [selectedMeds, setSelectedMeds] = useState({});
+  const initializedRef = useRef(false);
   // { medId: { selected: bool, amount: number, months: number, notes: string, currentStock: number } }
 
   // Calculation Helper
@@ -29,49 +28,59 @@ const PrescriptionGenerator = () => {
     return need;
   };
 
-  // Initialize selection
-  useEffect(() => {
-    // Better: Compute "diff"
-    setSelectedMeds(prev => {
-      const next = { ...prev };
-
-      medications.forEach(med => {
-        // If already exists, keep it (updates to stock will happen below)
-        const existing = next[med.id];
-
-        const totalStock = batches
-          .filter(b => b.medicationId === med.id)
-          .reduce((sum, b) => sum + b.currentQuantity, 0);
-
-        const isLowStock = totalStock <= med.lowStockThreshold;
-
-        if (!existing) {
-          // New Entry
-          const months = 1;
-          const amount = calculateNeed(med, totalStock, months);
-
-          next[med.id] = {
-            selected: isLowStock,
-            amount: isLowStock ? Math.max(amount, 1) : amount, // If low, at least suggest 1
-            months: 1,
-            notes: '',
-            currentStock: totalStock,
-            name: med.name,
-            unit: med.defaultUnit
-          };
-        } else {
-          // Update Stock and Metadata (Name/Unit might have changed)
-          next[med.id] = {
-            ...existing,
-            currentStock: totalStock,
-            name: med.name,
-            unit: med.defaultUnit
-          };
-        }
-      });
-      return next;
+  // Compute stock totals as derived data
+  const stockTotals = useMemo(() => {
+    const totals = {};
+    medications.forEach(med => {
+      totals[med.id] = batches
+        .filter(b => b.medicationId === med.id)
+        .reduce((sum, b) => sum + b.currentQuantity, 0);
     });
+    return totals;
   }, [medications, batches]);
+
+  // Initialize selection only once on mount, then sync stock updates
+  useEffect(() => {
+    if (!initializedRef.current && medications.length > 0) {
+      initializedRef.current = true;
+      const initial = {};
+      medications.forEach(med => {
+        const totalStock = stockTotals[med.id] || 0;
+        const isLowStock = totalStock <= med.lowStockThreshold;
+        const amount = calculateNeed(med, totalStock, 1);
+        initial[med.id] = {
+          selected: isLowStock,
+          amount: isLowStock ? Math.max(amount, 1) : amount,
+          months: 1,
+          notes: '',
+          currentStock: totalStock,
+          name: med.name,
+          unit: med.defaultUnit
+        };
+      });
+      setSelectedMeds(initial);
+    }
+  }, [medications, stockTotals]);
+
+  // Sync stock changes without re-initializing selection state
+  useEffect(() => {
+    if (initializedRef.current) {
+      setSelectedMeds(prev => {
+        const next = { ...prev };
+        medications.forEach(med => {
+          if (next[med.id]) {
+            next[med.id] = {
+              ...next[med.id],
+              currentStock: stockTotals[med.id] || 0,
+              name: med.name,
+              unit: med.defaultUnit
+            };
+          }
+        });
+        return next;
+      });
+    }
+  }, [stockTotals, medications]);
 
   // Handle Global Months Change
   const handleGlobalMonthsChange = (val) => {

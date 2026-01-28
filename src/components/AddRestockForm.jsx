@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useInventory } from '../context/InventoryContext';
 import { useToast } from '../context/ToastContext';
-import { findBestMatch, getAllAliases } from '../utils/drugAliases';
+import { findBestMatch } from '../utils/drugAliases';
 import SearchSection from './forms/SearchSection';
 import NewMedicationFields from './forms/NewMedicationFields';
 import BatchFields from './forms/BatchFields';
@@ -11,10 +11,6 @@ const AddRestockForm = ({ onComplete }) => {
     const toast = useToast();
 
     const [searchTerm, setSearchTerm] = useState('');
-    const [matchingMed, setMatchingMed] = useState(null);
-    const [potentialMatch, setPotentialMatch] = useState(null);
-    const [aliasMatch, setAliasMatch] = useState(null); // { med: object, canonical: string }
-    const [linkedGroup, setLinkedGroup] = useState(null); // { id, name, groupId }
 
     // New Medication State
     const [unit, setUnit] = useState('pills');
@@ -35,54 +31,43 @@ const AddRestockForm = ({ onComplete }) => {
     const [location, setLocation] = useState('Cabinet');
     const [batchNotes, setBatchNotes] = useState('');
 
-    // Effect: Search for matches
-    useEffect(() => {
-        if (!searchTerm) {
-            setMatchingMed(null);
-            setPotentialMatch(null);
-            setAliasMatch(null);
-            return;
-        }
+    // Derive matching states from searchTerm (avoids setState in useEffect)
+    const matchingMed = useMemo(() => {
+        if (!searchTerm) return null;
+        return medications.find(m => m.name.toLowerCase() === searchTerm.toLowerCase()) || null;
+    }, [searchTerm, medications]);
 
-        const exactMatch = medications.find(m => m.name.toLowerCase() === searchTerm.toLowerCase());
-        if (exactMatch) {
-            setMatchingMed(exactMatch);
-            setPotentialMatch(null);
-            setAliasMatch(null);
-            // Auto-set unit from existing med
-            setUnit(exactMatch.defaultUnit);
-            return;
-        } else {
-            setMatchingMed(null);
-        }
-
-        // Potential Matches (Typo or close string)
+    const potentialMatch = useMemo(() => {
+        if (!searchTerm || matchingMed) return null;
         const candidates = medications.filter(m => m.name.toLowerCase().includes(searchTerm.toLowerCase()));
-        if (candidates.length > 0) {
-            // Simple heuristic: if we have a very close match
-            setPotentialMatch(candidates[0]);
-        } else {
-            setPotentialMatch(null);
-        }
+        return candidates.length > 0 ? candidates[0] : null;
+    }, [searchTerm, matchingMed, medications]);
 
-        // Alias Logic
-        if (!exactMatch && !candidates.length) {
-            // Try to find if the input is an alias for an existing drug
-            const best = findBestMatch(searchTerm);
-            if (best) {
-                // Check if we have this generic in our inventory
-                const existing = medications.find(m =>
-                    m.name.toLowerCase() === best.canonical.toLowerCase() ||
-                    m.tags?.includes(best.canonical)
-                );
-
-                if (existing) {
-                    setAliasMatch({ med: existing, canonical: best.canonical });
-                }
+    const aliasMatch = useMemo(() => {
+        if (!searchTerm || matchingMed || potentialMatch) return null;
+        const best = findBestMatch(searchTerm);
+        if (best) {
+            const existing = medications.find(m =>
+                m.name.toLowerCase() === best.canonical.toLowerCase() ||
+                m.tags?.includes(best.canonical)
+            );
+            if (existing) {
+                return { med: existing, canonical: best.canonical };
             }
         }
+        return null;
+    }, [searchTerm, matchingMed, potentialMatch, medications]);
 
-    }, [searchTerm, medications]);
+    const [linkedGroup, setLinkedGroup] = useState(null); // { id, name, groupId }
+
+    // Auto-set unit when exact match found
+    const prevMatchingMedRef = useRef(null);
+    useEffect(() => {
+        if (matchingMed && matchingMed !== prevMatchingMedRef.current) {
+            setUnit(matchingMed.defaultUnit);
+        }
+        prevMatchingMedRef.current = matchingMed;
+    }, [matchingMed]);
 
     const handleUnifiedSubmit = async (e) => {
         e.preventDefault();
@@ -165,23 +150,19 @@ const AddRestockForm = ({ onComplete }) => {
             notes: batchNotes
         }, matchingMed ? matchingMed.name : searchTerm);
 
-        // Reset
+        // Reset - clearing searchTerm will reset derived values (matchingMed, potentialMatch, aliasMatch)
         setSearchTerm('');
         setQuantity(30);
         setExpiry('');
         setLocation('');
         setDosage('');
         setBatchNotes('');
-        setMatchingMed(null);
-        setPotentialMatch(null);
-        setAliasMatch(null);
         setLinkedGroup(null);
         if (onComplete) onComplete();
     };
 
     const confirmMatch = () => {
         setSearchTerm(potentialMatch.name);
-        setPotentialMatch(null);
     };
 
     const confirmAliasGroup = () => {
@@ -192,7 +173,7 @@ const AddRestockForm = ({ onComplete }) => {
         setThreshold(parent.lowStockThreshold);
         if (parent.usageRate) setUsageRate(parent.usageRate);
         if (parent.usageFrequency) setUsageFrequency(parent.usageFrequency);
-        setAliasMatch(null);
+        // No need to clear aliasMatch - it's derived from searchTerm
     };
 
     return (

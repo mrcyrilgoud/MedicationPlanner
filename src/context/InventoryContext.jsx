@@ -209,7 +209,7 @@ export const InventoryProvider = ({ children }) => {
       await storage.deleteMedication(id);
       await logActivity('delete', { id });
       toast.info('Medication record deleted.');
-    } catch (e) {
+    } catch {
       toast.error("Failed to delete");
     }
   };

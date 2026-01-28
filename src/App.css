@@ -68,9 +68,11 @@
   flex: 1;
   overflow-y: auto;
   padding: var(--space-lg) var(--space-md);
-  padding-bottom: 100px;
-  /* Space for nav + toast */
+  /* Bottom padding: space for nav (70px) + nav bottom position (20px + safe-area) + extra buffer for forms */
+  padding-bottom: calc(140px + env(safe-area-inset-bottom, 0px));
   scroll-behavior: smooth;
+  /* Smooth scrolling on iOS */
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Tablet adjustments */
@@ -167,7 +169,8 @@
 /* Bottom Nav */
 .bottom-nav {
   position: absolute;
-  bottom: 20px;
+  /* Account for safe area on notched phones */
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
   left: 20px;
   right: 20px;
   height: 70px;
@@ -442,8 +445,10 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   border: 1px solid var(--glass-border);
 }
+
 /* Print Styles */
 @media print {
+
   /* Hide non-printable elements */
   .no-print,
   .sidebar,
@@ -457,7 +462,7 @@
   }
 
   /* Reset container styles for print */
-  body, 
+  body,
   .app-container,
   .main-content {
     background: white !important;
@@ -482,8 +487,8 @@
   }
 
   /* Hide print-only elements from screen */
-  .selection-list, 
-  .prescription-container > .no-print {
+  .selection-list,
+  .prescription-container>.no-print {
     display: none !important;
   }
 }

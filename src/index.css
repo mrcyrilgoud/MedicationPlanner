@@ -121,6 +121,14 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
+  /* Mobile optimizations */
+  -webkit-tap-highlight-color: transparent; /* Remove tap highlight on mobile */
+  touch-action: manipulation; /* Disable double-tap zoom for faster taps */
+  overscroll-behavior: none; /* Prevent pull-to-refresh conflicts */
+  /* Safe area padding for notched phones (iPhone X+, etc.) */
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 /* Scrollbar */

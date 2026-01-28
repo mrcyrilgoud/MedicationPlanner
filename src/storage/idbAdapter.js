@@ -4,7 +4,7 @@ const DB_NAME = 'MedInventoryDB';
 const DB_VERSION = 3;
 
 const dbPromise = openDB(DB_NAME, DB_VERSION, {
-    upgrade(db, oldVersion, newVersion, transaction) {
+    upgrade(db) {
         // Store for medications
         if (!db.objectStoreNames.contains('medications')) {
             const medStore = db.createObjectStore('medications', { keyPath: 'id' });

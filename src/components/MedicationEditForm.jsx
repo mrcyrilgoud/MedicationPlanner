@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { X, Camera, Save } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { resizeImage } from '../utils/imageHelpers';

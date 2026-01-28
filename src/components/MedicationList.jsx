@@ -1,16 +1,13 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useInventory } from '../context/InventoryContext';
-import { useToast } from '../context/ToastContext';
 import { Search, X } from 'lucide-react';
 import ConfirmationModal from './ConfirmationModal';
 import MedicationItem from './MedicationItem';
 import MedicationEditForm from './MedicationEditForm';
-import { resizeImage } from '../utils/imageHelpers';
 import { calculateRunoutDate } from '../utils/calculations';
 
 const MedicationList = ({ filter }) => {
     const { medications, batches, deleteMedication, editMedication, linkMedications } = useInventory();
-    const toast = useToast();
     const [expandedId, setExpandedId] = useState(null);
     const [editingId, setEditingId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -133,7 +130,7 @@ const MedicationList = ({ filter }) => {
         return stats;
     }, [medications, batches]);
 
-    const getMedStats = (medId) => medStats[medId] || { totalQty: 0, nextExpiry: null, medBatches: [] };
+    const getMedStats = useCallback((medId) => medStats[medId] || { totalQty: 0, nextExpiry: null, medBatches: [] }, [medStats]);
 
     const groupedMedications = useMemo(() => {
         const filtered = medications.filter(med => {
@@ -144,7 +141,8 @@ const MedicationList = ({ filter }) => {
 
             if (!filter) return true;
 
-            const { totalQty, nextExpiry } = getMedStats(med.id);
+            const stats = medStats[med.id] || { totalQty: 0, nextExpiry: null };
+            const { totalQty, nextExpiry } = stats;
 
             if (filter === 'low') return totalQty <= med.lowStockThreshold;
             if (filter === 'expiring') return nextExpiry && ((nextExpiry - new Date()) / (1000 * 60 * 60 * 24) < 30);
