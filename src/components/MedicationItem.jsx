@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Trash2, Pill, Pencil, ImageIcon, BookOpen } from 'lucide-react';
-import { useInventory } from '../context/InventoryContext';
 import { useToast } from '../context/ToastContext';
 import { calculateRunoutDate } from '../utils/calculations';
 import { getSmartLink } from '../utils/drugApi';
@@ -15,9 +14,9 @@ const MedicationItem = React.memo(({
     isExpanded,
     onToggleExpand,
     onDelete,
+    onConsume,
     children // For edit form
 }) => {
-    const { consumeMedication } = useInventory();
     const toast = useToast();
     const [consumeAmount, setConsumeAmount] = useState('');
     const [selectedImage, setSelectedImage] = useState(null);
@@ -285,7 +284,7 @@ const MedicationItem = React.memo(({
                                         toast.warning('Enter a valid amount');
                                         return;
                                     }
-                                    consumeMedication(med.id, Number(consumeAmount));
+                                    onConsume(med.id, Number(consumeAmount));
                                     setConsumeAmount('');
                                 }}
                             >
@@ -313,4 +312,3 @@ const MedicationItem = React.memo(({
 });
 
 export default MedicationItem;
-

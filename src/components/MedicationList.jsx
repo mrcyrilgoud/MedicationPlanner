@@ -1,16 +1,13 @@
-import React, { useState, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useInventory } from '../context/InventoryContext';
-import { useToast } from '../context/ToastContext';
 import { Search, X } from 'lucide-react';
 import ConfirmationModal from './ConfirmationModal';
 import MedicationItem from './MedicationItem';
 import MedicationEditForm from './MedicationEditForm';
-import { resizeImage } from '../utils/imageHelpers';
 import { calculateRunoutDate } from '../utils/calculations';
 
 const MedicationList = ({ filter }) => {
-    const { medications, batches, deleteMedication, editMedication, linkMedications } = useInventory();
-    const toast = useToast();
+    const { medications, batchStatsByMedication, consumeMedication, deleteMedication, editMedication, linkMedications } = useInventory();
     const [expandedId, setExpandedId] = useState(null);
     const [editingId, setEditingId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -23,7 +20,7 @@ const MedicationList = ({ filter }) => {
 
     // --- Actions ---
 
-    const confirmDelete = (med, totalQty) => {
+    const confirmDelete = useCallback((med, totalQty) => {
         setModalConfig({
             title: 'Delete Medication?',
             message: totalQty > 0
@@ -33,13 +30,13 @@ const MedicationList = ({ filter }) => {
             confirmText: 'Delete Forever',
             onConfirm: () => deleteMedication(med.id)
         });
-    };
+    }, [deleteMedication]);
 
-    const toggleExpand = (id) => {
-        setExpandedId(expandedId === id ? null : id);
-    };
+    const toggleExpand = useCallback((id) => {
+        setExpandedId(prev => (prev === id ? null : id));
+    }, []);
 
-    const startEditing = (e, med) => {
+    const startEditing = useCallback((e, med) => {
         e.stopPropagation();
         setEditingId(med.id);
         setEditForm({
@@ -53,15 +50,15 @@ const MedicationList = ({ filter }) => {
             images: med.images || [],
             condition: med.condition || ''
         });
-    };
+    }, []);
 
-    const cancelEditing = (e) => {
+    const cancelEditing = useCallback((e) => {
         if (e) e.stopPropagation();
         setEditingId(null);
         setEditForm({});
-    };
+    }, []);
 
-    const saveEditing = () => {
+    const saveEditing = useCallback(() => {
         const med = medications.find(m => m.id === editingId);
         if (!med) return;
 
@@ -80,9 +77,9 @@ const MedicationList = ({ filter }) => {
             condition: editForm.condition
         });
         setEditingId(null);
-    };
+    }, [editForm, editMedication, editingId, medications]);
 
-    const handleLink = (targetId) => {
+    const handleLink = useCallback((targetId) => {
         setModalConfig({
             title: 'Group Medications',
             message: "Group this into the selected medication's group?",
@@ -93,9 +90,9 @@ const MedicationList = ({ filter }) => {
                 setEditingId(null);
             }
         });
-    };
+    }, [editingId, linkMedications]);
 
-    const handleUngroup = () => {
+    const handleUngroup = useCallback(() => {
         setModalConfig({
             title: 'Ungroup Medication',
             message: "Remove this medication from its group?",
@@ -106,39 +103,18 @@ const MedicationList = ({ filter }) => {
                 setEditingId(null);
             }
         });
-    };
+    }, [editMedication, editingId]);
 
-    // --- Stats & Grouping ---
-
-    const medStats = useMemo(() => {
-        const stats = {};
-        medications.forEach(med => {
-            stats[med.id] = { totalQty: 0, nextExpiry: null, medBatches: [] };
-        });
-
-        batches.forEach(batch => {
-            if (stats[batch.medicationId]) {
-                const entry = stats[batch.medicationId];
-                entry.medBatches.push(batch);
-                entry.totalQty += batch.currentQuantity;
-
-                if (batch.currentQuantity > 0) {
-                    const expDate = new Date(batch.expiryDate + 'T00:00');
-                    if (!entry.nextExpiry || expDate < entry.nextExpiry) {
-                        entry.nextExpiry = expDate;
-                    }
-                }
-            }
-        });
-        return stats;
-    }, [medications, batches]);
-
-    const getMedStats = (medId) => medStats[medId] || { totalQty: 0, nextExpiry: null, medBatches: [] };
+    const getMedStats = useCallback((medId) => (
+        batchStatsByMedication[medId] || { totalQty: 0, nextExpiry: null, medBatches: [] }
+    ), [batchStatsByMedication]);
 
     const groupedMedications = useMemo(() => {
+        const normalizedSearch = searchTerm.trim().toLowerCase();
+
         const filtered = medications.filter(med => {
-            if (searchTerm && !med.name.toLowerCase().includes(searchTerm.toLowerCase())) {
-                const hasTag = med.tags && med.tags.some(t => t.toLowerCase().includes(searchTerm.toLowerCase()));
+            if (normalizedSearch && !med.name.toLowerCase().includes(normalizedSearch)) {
+                const hasTag = med.tags && med.tags.some(t => t.toLowerCase().includes(normalizedSearch));
                 if (!hasTag) return false;
             }
 
@@ -173,7 +149,7 @@ const MedicationList = ({ filter }) => {
 
         result.sort((a, b) => a[0].name.localeCompare(b[0].name));
         return result;
-    }, [medications, searchTerm, filter, medStats]);
+    }, [medications, searchTerm, filter, getMedStats]);
 
     return (
         <div className="medication-list">
@@ -229,6 +205,7 @@ const MedicationList = ({ filter }) => {
                                         isExpanded={expandedId === med.id}
                                         onToggleExpand={toggleExpand}
                                         onDelete={confirmDelete}
+                                        onConsume={consumeMedication}
                                     >
                                         {/* Pass Edit Form as Child */}
                                         {editingId === med.id && (
@@ -255,5 +232,3 @@ const MedicationList = ({ filter }) => {
 };
 
 export default MedicationList;
-
-

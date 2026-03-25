@@ -1,16 +1,22 @@
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useState } from 'react';
 import { InventoryProvider } from './context/InventoryContext';
 import { ToastProvider } from './context/ToastContext';
 import Dashboard from './components/Dashboard';
-import MedicationList from './components/MedicationList';
-import AddRestockForm from './components/AddRestockForm';
-import PrescriptionGenerator from './components/PrescriptionGenerator';
-
-import DataManagement from './components/DataManagement';
 import ModeSwitcher from './components/ModeSwitcher';
-import HistoryView from './components/HistoryView';
 import { LayoutGrid, List, PlusCircle, Settings, History, ScrollText } from 'lucide-react';
 import './App.css';
+
+const MedicationList = lazy(() => import('./components/MedicationList'));
+const AddRestockForm = lazy(() => import('./components/AddRestockForm'));
+const PrescriptionGenerator = lazy(() => import('./components/PrescriptionGenerator'));
+const DataManagement = lazy(() => import('./components/DataManagement'));
+const HistoryView = lazy(() => import('./components/HistoryView'));
+
+const ViewLoadingState = () => (
+  <div style={{ padding: '2rem 1rem', color: 'var(--text-secondary)' }}>
+    Loading...
+  </div>
+);
 
 function App() {
   // Default to phone, but try to detect on mount
@@ -67,54 +73,66 @@ function App() {
     switch (currentView) {
       case 'dashboard': return <Dashboard onNavigate={handleNavigate} />;
       case 'inventory': return (
-        <div style={{ paddingTop: '1rem' }}>
-          <h2 style={{ marginBottom: '1rem' }}>
-            {viewParams.filter ? (
-              viewParams.filter === 'low' ? 'Low Stock Items' :
-                viewParams.filter === 'expiring' ? 'Expiring Items' :
-                  viewParams.filter === 'projected' ? 'Empty Soon Items' :
-                    'Filtered Items'
-            ) : 'My Inventory'}
-            {viewParams.filter && (
-              <button
-                onClick={() => setViewParams({})}
-                style={{
-                  marginLeft: '1rem',
-                  fontSize: '0.8rem',
-                  padding: '4px 8px',
-                  background: 'rgba(255,255,255,0.1)',
-                  border: 'none',
-                  borderRadius: '4px',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer'
-                }}
-              >
-                Clear Filter
-              </button>
-            )}
-          </h2>
-          <MedicationList filter={viewParams.filter} />
-        </div>
+        <Suspense fallback={<ViewLoadingState />}>
+          <div style={{ paddingTop: '1rem' }}>
+            <h2 style={{ marginBottom: '1rem' }}>
+              {viewParams.filter ? (
+                viewParams.filter === 'low' ? 'Low Stock Items' :
+                  viewParams.filter === 'expiring' ? 'Expiring Items' :
+                    viewParams.filter === 'projected' ? 'Empty Soon Items' :
+                      'Filtered Items'
+              ) : 'My Inventory'}
+              {viewParams.filter && (
+                <button
+                  onClick={() => setViewParams({})}
+                  style={{
+                    marginLeft: '1rem',
+                    fontSize: '0.8rem',
+                    padding: '4px 8px',
+                    background: 'rgba(255,255,255,0.1)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Clear Filter
+                </button>
+              )}
+            </h2>
+            <MedicationList filter={viewParams.filter} />
+          </div>
+        </Suspense>
       );
       case 'add': return (
-        <div style={{ paddingTop: '1rem' }}>
-          <h2 style={{ marginBottom: '1rem' }}>Manage Stock</h2>
-          <AddRestockForm onComplete={() => handleNavigate('inventory')} />
-        </div>
+        <Suspense fallback={<ViewLoadingState />}>
+          <div style={{ paddingTop: '1rem' }}>
+            <h2 style={{ marginBottom: '1rem' }}>Manage Stock</h2>
+            <AddRestockForm onComplete={() => handleNavigate('inventory')} />
+          </div>
+        </Suspense>
       );
-      case 'history': return <HistoryView />;
+      case 'history': return (
+        <Suspense fallback={<ViewLoadingState />}>
+          <HistoryView />
+        </Suspense>
+      );
       case 'shopping-list': return (
-        <div style={{ paddingTop: '1rem' }}>
-          <PrescriptionGenerator />
-        </div>
+        <Suspense fallback={<ViewLoadingState />}>
+          <div style={{ paddingTop: '1rem' }}>
+            <PrescriptionGenerator />
+          </div>
+        </Suspense>
       );
       case 'settings': return (
-        <DataManagement
-          currentMode={deviceMode}
-          onModeChange={setDeviceMode}
-          currentTheme={theme}
-          onThemeChange={setTheme}
-        />
+        <Suspense fallback={<ViewLoadingState />}>
+          <DataManagement
+            currentMode={deviceMode}
+            onModeChange={setDeviceMode}
+            currentTheme={theme}
+            onThemeChange={setTheme}
+          />
+        </Suspense>
       );
       default: return <Dashboard onNavigate={handleNavigate} />;
     }
