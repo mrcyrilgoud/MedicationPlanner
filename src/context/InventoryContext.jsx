@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useToast } from './ToastContext';
 import { storage } from '../storage';
 import { calculateRunoutDate } from '../utils/calculations';
@@ -61,7 +61,7 @@ export const InventoryProvider = ({ children }) => {
   // Removed the auto-save useEffect because we now save on action.
   // This prevents race conditions and excessive writes.
 
-  const logActivity = async (actionType, data) => {
+  const logActivity = useCallback(async (actionType, data) => {
     try {
       const entry = {
         id: crypto.randomUUID(),
@@ -75,9 +75,83 @@ export const InventoryProvider = ({ children }) => {
     } catch (e) {
       console.error("Failed to log history", e);
     }
-  };
+  }, []);
 
-  const addMedication = async (med) => {
+  const medicationMap = useMemo(() => {
+    const map = new Map();
+    medications.forEach((med) => {
+      map.set(med.id, med);
+    });
+    return map;
+  }, [medications]);
+
+  const batchStatsByMedication = useMemo(() => {
+    const stats = {};
+
+    medications.forEach((med) => {
+      stats[med.id] = { totalQty: 0, nextExpiry: null, medBatches: [] };
+    });
+
+    batches.forEach((batch) => {
+      const entry = stats[batch.medicationId];
+      if (!entry) return;
+
+      entry.medBatches.push(batch);
+      entry.totalQty += batch.currentQuantity;
+
+      if (batch.currentQuantity <= 0) return;
+
+      const expiry = new Date(`${batch.expiryDate}T00:00`);
+      if (!entry.nextExpiry || expiry < entry.nextExpiry) {
+        entry.nextExpiry = expiry;
+      }
+    });
+
+    return stats;
+  }, [medications, batches]);
+
+  const stats = useMemo(() => {
+    let expiringSoonCount = 0;
+    let lowStockCount = 0;
+    let projectedEmptyCount = 0;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    medications.forEach((med) => {
+      const medStats = batchStatsByMedication[med.id] || { totalQty: 0, nextExpiry: null };
+
+      if (medStats.nextExpiry) {
+        const daysUntilExpiry = (medStats.nextExpiry - today) / (1000 * 60 * 60 * 24);
+        if (daysUntilExpiry < 30) {
+          expiringSoonCount += 1;
+        }
+      }
+
+      if (medStats.totalQty <= med.lowStockThreshold) {
+        lowStockCount += 1;
+      }
+
+      const runout = calculateRunoutDate(
+        medStats.totalQty,
+        med.usageRate,
+        med.usageFrequency,
+        med.lowStockThreshold
+      );
+
+      if (runout && runout.daysUntilEmpty < 7) {
+        projectedEmptyCount += 1;
+      }
+    });
+
+    return {
+      expiringSoonCount,
+      lowStockCount,
+      projectedEmptyCount
+    };
+  }, [medications, batchStatsByMedication]);
+
+  const addMedication = useCallback(async (med) => {
     const newId = crypto.randomUUID();
     const newMed = {
       ...med,
@@ -102,9 +176,9 @@ export const InventoryProvider = ({ children }) => {
       toast.error("Failed to save medication");
       throw err;
     }
-  };
+  }, [logActivity, toast]);
 
-  const addBatch = async (batch, medNameOverride = null) => {
+  const addBatch = useCallback(async (batch, medNameOverride = null) => {
     if (Number(batch.initialQuantity) <= 0) {
       toast.error('Quantity must be greater than 0');
       throw new Error('Quantity must be greater than 0');
@@ -123,8 +197,7 @@ export const InventoryProvider = ({ children }) => {
       // Use override if provided (fixes race condition in new med creation)
       let name = medNameOverride;
       if (!name) {
-        const med = medications.find(m => m.id === batch.medicationId);
-        name = med ? med.name : 'Unknown Med';
+        name = medicationMap.get(batch.medicationId)?.name || 'Unknown Med';
       }
       await logActivity('add_stock', { medicationId: batch.medicationId, name, quantity: batch.initialQuantity });
       toast.success('Stock added successfully!');
@@ -132,17 +205,15 @@ export const InventoryProvider = ({ children }) => {
       toast.error("Failed to save stock");
       throw e;
     }
-  };
+  }, [logActivity, medicationMap, toast]);
 
-  const consumeMedication = async (medicationId, amount) => {
+  const consumeMedication = useCallback(async (medicationId, amount) => {
     if (amount <= 0) {
       toast.warning('Please enter a valid amount.');
       return;
     }
 
-    const totalAvailable = batches
-      .filter(b => b.medicationId === medicationId)
-      .reduce((sum, b) => sum + b.currentQuantity, 0);
+    const totalAvailable = batchStatsByMedication[medicationId]?.totalQty || 0;
 
     if (amount > totalAvailable) {
       toast.error(`Not enough stock! Available: ${totalAvailable}`);
@@ -190,8 +261,7 @@ export const InventoryProvider = ({ children }) => {
     // Persist changes
     try {
       await storage.saveBatches(changedBatches);
-      const med = medications.find(m => m.id === medicationId);
-      const name = med ? med.name : 'Unknown';
+      const name = medicationMap.get(medicationId)?.name || 'Unknown';
       await logActivity('consume', { medicationId, name, amount });
       toast.success('Medication consumed.');
     } catch (e) {
@@ -199,9 +269,9 @@ export const InventoryProvider = ({ children }) => {
       toast.error("Failed to update stock");
       // Ideally revert state here, but omitting for brevity
     }
-  };
+  }, [batchStatsByMedication, batches, logActivity, medicationMap, toast]);
 
-  const deleteMedication = async (id) => {
+  const deleteMedication = useCallback(async (id) => {
     setMedications(prev => prev.filter(m => m.id !== id));
     setBatches(prev => prev.filter(b => b.medicationId !== id));
 
@@ -209,12 +279,12 @@ export const InventoryProvider = ({ children }) => {
       await storage.deleteMedication(id);
       await logActivity('delete', { id });
       toast.info('Medication record deleted.');
-    } catch (e) {
+    } catch {
       toast.error("Failed to delete");
     }
-  };
+  }, [logActivity, toast]);
 
-  const editMedication = async (id, updates) => {
+  const editMedication = useCallback(async (id, updates) => {
     // 1. Compute new state purely
     let updatedMed = null;
 
@@ -240,16 +310,16 @@ export const InventoryProvider = ({ children }) => {
         toast.error("Failed to save changes");
       }
     }
-  };
+  }, [logActivity, toast]);
 
-  const linkMedications = (primaryId, secondaryId) => {
-    const primary = medications.find(m => m.id === primaryId);
+  const linkMedications = useCallback((primaryId, secondaryId) => {
+    const primary = medicationMap.get(primaryId);
     if (!primary) return;
     editMedication(secondaryId, { groupId: primary.groupId || primary.id });
     toast.success('Medications grouped successfully');
-  };
+  }, [editMedication, medicationMap, toast]);
 
-  const importData = async (data) => {
+  const importData = useCallback(async (data) => {
     try {
       if (!data || !Array.isArray(data.medications) || !Array.isArray(data.batches)) {
         throw new Error("Invalid data format");
@@ -257,10 +327,7 @@ export const InventoryProvider = ({ children }) => {
 
       setLoading(true);
 
-      // Merge logic: currently just adds/overwrites if ID exists
-      for (const m of data.medications) {
-        await storage.saveMedication(m);
-      }
+      await Promise.all(data.medications.map((med) => storage.saveMedication(med)));
       await storage.saveBatches(data.batches);
 
       // Reload state
@@ -274,55 +341,19 @@ export const InventoryProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
 
-  const getStats = () => {
-    // Calculate global stats
-    const expiringSoon = batches.filter(b => {
-      // Use consistent local midnight time for expiry checks to avoid timezone issues
-      const expiryDate = new Date(b.expiryDate + 'T00:00');
-      const now = new Date();
-      now.setHours(0, 0, 0, 0); // Compare to start of today
+  const getStats = useCallback(() => stats, [stats]);
 
-      const daysUntil = (expiryDate - now) / (1000 * 60 * 60 * 24);
-      return daysUntil < 30 && b.currentQuantity > 0;
-    });
-
-    const lowStock = medications.filter(med => {
-      const totalStock = batches
-        .filter(b => b.medicationId === med.id)
-        .reduce((sum, b) => sum + b.currentQuantity, 0);
-      return totalStock <= med.lowStockThreshold;
-    });
-
-    const projectedEmpty = medications.filter(med => {
-      const totalStock = batches
-        .filter(b => b.medicationId === med.id)
-        .reduce((sum, b) => sum + b.currentQuantity, 0);
-
-      const runout = calculateRunoutDate(totalStock, med.usageRate, med.usageFrequency);
-      return runout && runout.daysUntilEmpty < 7; // Alert if less than a week
-    });
-
-    return {
-      expiringSoonCount: expiringSoon.length,
-      lowStockCount: lowStock.length,
-      projectedEmptyCount: projectedEmpty.length
-    };
-  };
-
-
-
-
-  const getHistoryLog = async (pagination) => {
+  const getHistoryLog = useCallback(async (pagination) => {
     return await storage.getHistory(pagination);
-  };
+  }, []);
 
-  const getHistoryTotalCount = async () => {
+  const getHistoryTotalCount = useCallback(async () => {
     return await storage.getHistoryCount();
-  };
+  }, []);
 
-  const revertHistoryAction = async (item) => {
+  const revertHistoryAction = useCallback(async (item) => {
     try {
       if (item.actionType === 'consume') {
         const { medicationId, amount, name } = item.data;
@@ -372,9 +403,9 @@ export const InventoryProvider = ({ children }) => {
       console.error("Revert failed", e);
       toast.error("Failed to revert action");
     }
-  };
+  }, [batches, deleteMedication, toast]);
 
-  const updateHistoryEntry = async (id, newData) => {
+  const updateHistoryEntry = useCallback(async (id, newData) => {
     try {
       await storage.updateHistoryEntry(id, newData);
       toast.success("History record updated");
@@ -382,27 +413,47 @@ export const InventoryProvider = ({ children }) => {
       console.error("Update failed", e);
       toast.error("Failed to update record");
     }
-  };
+  }, [toast]);
+
+  const value = useMemo(() => ({
+    medications,
+    batches,
+    batchStatsByMedication,
+    loading,
+    addMedication,
+    addBatch,
+    consumeMedication,
+    deleteMedication,
+    editMedication,
+    getStats,
+    calculateRunoutDate,
+    linkMedications,
+    importData,
+    getHistoryLog,
+    getHistoryTotalCount,
+    revertHistoryAction,
+    updateHistoryEntry
+  }), [
+    medications,
+    batches,
+    batchStatsByMedication,
+    loading,
+    addMedication,
+    addBatch,
+    consumeMedication,
+    deleteMedication,
+    editMedication,
+    getStats,
+    linkMedications,
+    importData,
+    getHistoryLog,
+    getHistoryTotalCount,
+    revertHistoryAction,
+    updateHistoryEntry
+  ]);
 
   return (
-    <InventoryContext.Provider value={{
-      medications,
-      batches,
-      loading,
-      addMedication,
-      addBatch,
-      consumeMedication,
-      deleteMedication,
-      editMedication,
-      getStats,
-      calculateRunoutDate,
-      linkMedications,
-      importData,
-      getHistoryLog,
-      getHistoryTotalCount,
-      revertHistoryAction,
-      updateHistoryEntry
-    }}>
+    <InventoryContext.Provider value={value}>
       {children}
     </InventoryContext.Provider>
   );

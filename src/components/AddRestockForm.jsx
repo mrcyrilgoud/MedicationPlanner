@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useInventory } from '../context/InventoryContext';
 import { useToast } from '../context/ToastContext';
-import { findBestMatch, getAllAliases } from '../utils/drugAliases';
+import { findBestMatch } from '../utils/drugAliases';
 import SearchSection from './forms/SearchSection';
 import NewMedicationFields from './forms/NewMedicationFields';
 import BatchFields from './forms/BatchFields';
@@ -11,9 +11,6 @@ const AddRestockForm = ({ onComplete }) => {
     const toast = useToast();
 
     const [searchTerm, setSearchTerm] = useState('');
-    const [matchingMed, setMatchingMed] = useState(null);
-    const [potentialMatch, setPotentialMatch] = useState(null);
-    const [aliasMatch, setAliasMatch] = useState(null); // { med: object, canonical: string }
     const [linkedGroup, setLinkedGroup] = useState(null); // { id, name, groupId }
 
     // New Medication State
@@ -35,54 +32,31 @@ const AddRestockForm = ({ onComplete }) => {
     const [location, setLocation] = useState('Cabinet');
     const [batchNotes, setBatchNotes] = useState('');
 
-    // Effect: Search for matches
-    useEffect(() => {
-        if (!searchTerm) {
-            setMatchingMed(null);
-            setPotentialMatch(null);
-            setAliasMatch(null);
-            return;
-        }
+    const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
-        const exactMatch = medications.find(m => m.name.toLowerCase() === searchTerm.toLowerCase());
-        if (exactMatch) {
-            setMatchingMed(exactMatch);
-            setPotentialMatch(null);
-            setAliasMatch(null);
-            // Auto-set unit from existing med
-            setUnit(exactMatch.defaultUnit);
-            return;
-        } else {
-            setMatchingMed(null);
-        }
+    const matchingMed = useMemo(() => {
+        if (!normalizedSearchTerm) return null;
+        return medications.find(m => m.name.toLowerCase() === normalizedSearchTerm) || null;
+    }, [medications, normalizedSearchTerm]);
 
-        // Potential Matches (Typo or close string)
-        const candidates = medications.filter(m => m.name.toLowerCase().includes(searchTerm.toLowerCase()));
-        if (candidates.length > 0) {
-            // Simple heuristic: if we have a very close match
-            setPotentialMatch(candidates[0]);
-        } else {
-            setPotentialMatch(null);
-        }
+    const potentialMatch = useMemo(() => {
+        if (!normalizedSearchTerm || matchingMed) return null;
+        return medications.find(m => m.name.toLowerCase().includes(normalizedSearchTerm)) || null;
+    }, [matchingMed, medications, normalizedSearchTerm]);
 
-        // Alias Logic
-        if (!exactMatch && !candidates.length) {
-            // Try to find if the input is an alias for an existing drug
-            const best = findBestMatch(searchTerm);
-            if (best) {
-                // Check if we have this generic in our inventory
-                const existing = medications.find(m =>
-                    m.name.toLowerCase() === best.canonical.toLowerCase() ||
-                    m.tags?.includes(best.canonical)
-                );
+    const aliasMatch = useMemo(() => {
+        if (!normalizedSearchTerm || matchingMed || potentialMatch) return null;
 
-                if (existing) {
-                    setAliasMatch({ med: existing, canonical: best.canonical });
-                }
-            }
-        }
+        const best = findBestMatch(searchTerm);
+        if (!best) return null;
 
-    }, [searchTerm, medications]);
+        const existing = medications.find(m =>
+            m.name.toLowerCase() === best.canonical.toLowerCase() ||
+            m.tags?.includes(best.canonical)
+        );
+
+        return existing ? { med: existing, canonical: best.canonical } : null;
+    }, [matchingMed, medications, potentialMatch, normalizedSearchTerm, searchTerm]);
 
     const handleUnifiedSubmit = async (e) => {
         e.preventDefault();
@@ -172,16 +146,12 @@ const AddRestockForm = ({ onComplete }) => {
         setLocation('');
         setDosage('');
         setBatchNotes('');
-        setMatchingMed(null);
-        setPotentialMatch(null);
-        setAliasMatch(null);
         setLinkedGroup(null);
         if (onComplete) onComplete();
     };
 
     const confirmMatch = () => {
         setSearchTerm(potentialMatch.name);
-        setPotentialMatch(null);
     };
 
     const confirmAliasGroup = () => {
@@ -192,7 +162,6 @@ const AddRestockForm = ({ onComplete }) => {
         setThreshold(parent.lowStockThreshold);
         if (parent.usageRate) setUsageRate(parent.usageRate);
         if (parent.usageFrequency) setUsageFrequency(parent.usageFrequency);
-        setAliasMatch(null);
     };
 
     return (

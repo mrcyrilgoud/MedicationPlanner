@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useInventory } from '../context/InventoryContext';
 import { History, Plus, Trash2, Edit, Activity, Package, ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react';
 
@@ -15,7 +15,7 @@ const HistoryView = () => {
     const [editingItem, setEditingItem] = useState(null);
     const [editData, setEditData] = useState({});
 
-    const loadHistory = async () => {
+    const loadHistory = useCallback(async () => {
         setLoading(true);
         try {
             const count = await getHistoryTotalCount();
@@ -32,11 +32,11 @@ const HistoryView = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [currentPage, getHistoryLog, getHistoryTotalCount]);
 
     useEffect(() => {
         loadHistory();
-    }, [getHistoryLog, currentPage]);
+    }, [loadHistory]);
 
     const handleRevert = async (item) => {
         if (window.confirm("Are you sure you want to revert this action? This will undo the changes.")) {
