@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { useToast } from '../context/ToastContext';
-import { getLowStockThresholdQuantity } from '../utils/calculations';
+import { getDailyUsageQuantityForMedication, getLowStockThresholdQuantity } from '../utils/calculations';
 
 const PrescriptionGenerator = ({ initialMedicationId = null }) => {
   const { activeMedications, batches, batchStatsByMedication } = useInventory();
@@ -28,17 +28,13 @@ const PrescriptionGenerator = ({ initialMedicationId = null }) => {
     return map;
   }, [activeMedications]);
 
-  const getDailyRate = (medication) => {
-    if (!medication?.usageRate || Number(medication.usageRate) <= 0) return null;
-    let dailyRate = Number(medication.usageRate);
-    if (medication.usageFrequency === 'weekly') dailyRate /= 7;
-    if (medication.usageFrequency === 'monthly') dailyRate /= 30;
-    return dailyRate;
-  };
+  const getDailyRate = (medication) => getDailyUsageQuantityForMedication(medication);
 
   const convertDisplayAmount = (quantity, medication) => {
     if (medication.defaultUnit !== 'inhaler') {
-      return Math.max(0, Math.ceil(quantity));
+      const normalized = Number(quantity || 0);
+      if (Number.isInteger(normalized)) return normalized;
+      return Number(normalized.toFixed(2));
     }
     return Math.max(0, Math.ceil(quantity / (Number(medication.puffsPerCanister) || 200)));
   };

@@ -2,6 +2,7 @@ import React from 'react';
 import { useInventory } from '../context/InventoryContext';
 import { AlertTriangle, PackageX, Activity, ArrowRight, ShoppingCart, PlusCircle } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
+import { getDailyUsageQuantityForMedication } from '../utils/calculations';
 
 const QueueCard = ({ title, subtitle, items, emptyLabel, onNavigate, onTake }) => (
     <section className="dashboard-queue-card">
@@ -18,7 +19,8 @@ const QueueCard = ({ title, subtitle, items, emptyLabel, onNavigate, onTake }) =
         ) : (
             <div className="dashboard-queue-list">
                 {items.map(({ medication, medStats, runout, nextExpiryDays, lowStock, expiringSoon, refillSoon }) => {
-                    const canQuickTake = Boolean(medication.usageRate) && Number(medStats.totalQty) > 0;
+                    const quickTakeAmount = getDailyUsageQuantityForMedication(medication);
+                    const canQuickTake = Boolean(quickTakeAmount) && Number(medStats.totalQty) > 0;
                     return (
                         <div key={medication.id} className="dashboard-queue-item">
                         <div className="dashboard-queue-main">
@@ -44,7 +46,7 @@ const QueueCard = ({ title, subtitle, items, emptyLabel, onNavigate, onTake }) =
                                 Shop
                             </button>
                             {canQuickTake ? (
-                                <button className="btn ghost-btn primary-outline" onClick={() => onTake(medication)}>
+                                <button className="btn ghost-btn primary-outline" onClick={() => onTake(medication, quickTakeAmount)}>
                                     Take
                                 </button>
                             ) : (
@@ -67,15 +69,15 @@ const Dashboard = ({ onNavigate }) => {
     const { expiringSoonCount, lowStockCount, projectedEmptyCount } = getStats();
     const queues = getDashboardQueues();
 
-    const handleQuickTake = async (medication) => {
-        if (!medication.usageRate) {
+    const handleQuickTake = async (medication, quickTakeAmount) => {
+        if (!quickTakeAmount) {
             toast.warning('Add a usage estimate before using quick take.');
             return;
         }
 
         try {
-            await consumeMedication(medication.id, Number(medication.usageRate), 'Quick take from dashboard');
-            toast.success(`Logged ${medication.usageRate} for ${medication.name}`);
+            await consumeMedication(medication.id, quickTakeAmount, 'Quick take from dashboard');
+            toast.success(`Logged ${quickTakeAmount.toFixed(2).replace(/\.00$/, '')} for ${medication.name}`);
         } catch (error) {
             toast.error(error.message);
         }
