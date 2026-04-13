@@ -37,3 +37,11 @@ export const calculateRunoutDate = (totalQuantity, usageRate, usageFrequency, lo
         daysUntilLow
     };
 };
+
+export const getLowStockThresholdQuantity = (medication) => {
+    const threshold = Number(medication?.lowStockThreshold || 0);
+    if (medication?.defaultUnit === 'inhaler') {
+        return threshold * (Number(medication?.puffsPerCanister) || 200);
+    }
+    return threshold;
+};

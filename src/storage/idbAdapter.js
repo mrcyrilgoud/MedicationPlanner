@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'MedInventoryDB';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 const dbPromise = openDB(DB_NAME, DB_VERSION, {
     upgrade(db) {
@@ -59,6 +59,10 @@ export const idbAdapter = {
 
     async getHistoryCount() {
         return (await dbPromise).count('history');
+    },
+
+    async getAllHistory() {
+        return (await dbPromise).getAll('history');
     },
 
     // --- Batches ---
@@ -126,6 +130,47 @@ export const idbAdapter = {
             }
             await tx.store.put(updated);
         }
+        await tx.done;
+    },
+
+    async applyMutation(mutation) {
+        const db = await dbPromise;
+        const tx = db.transaction(['medications', 'batches', 'history'], 'readwrite');
+        const medicationStore = tx.objectStore('medications');
+        const batchStore = tx.objectStore('batches');
+        const historyStore = tx.objectStore('history');
+
+        if (mutation.replaceAll) {
+            const {
+                medications = [],
+                batches = [],
+                history = []
+            } = mutation.replaceAll;
+
+            await Promise.all([
+                medicationStore.clear(),
+                batchStore.clear(),
+                historyStore.clear()
+            ]);
+
+            await Promise.all([
+                ...medications.map((medication) => medicationStore.put(medication)),
+                ...batches.map((batch) => batchStore.put(batch)),
+                ...history.map((entry) => historyStore.put(entry))
+            ]);
+            await tx.done;
+            return;
+        }
+
+        await Promise.all([
+            ...(mutation.medicationsToPut || []).map((medication) => medicationStore.put(medication)),
+            ...(mutation.medicationIdsToDelete || []).map((id) => medicationStore.delete(id)),
+            ...(mutation.batchesToPut || []).map((batch) => batchStore.put(batch)),
+            ...(mutation.batchIdsToDelete || []).map((id) => batchStore.delete(id)),
+            ...(mutation.historyToPut || []).map((entry) => historyStore.put(entry)),
+            ...(mutation.historyIdsToDelete || []).map((id) => historyStore.delete(id))
+        ]);
+
         await tx.done;
     },
 

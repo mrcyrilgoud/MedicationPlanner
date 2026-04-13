@@ -1,14 +1,68 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useToast } from './ToastContext';
 import { storage } from '../storage';
-import { calculateRunoutDate } from '../utils/calculations';
+import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
+import { applyStoredPreferences, getStoredPreferences } from '../utils/preferences';
 
 const InventoryContext = createContext();
+const HISTORY_SCHEMA_VERSION = 2;
+const EXPIRY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const cloneEntity = (entity) => {
+  if (!entity) return entity;
+  if (typeof structuredClone === 'function') {
+    return structuredClone(entity);
+  }
+  return JSON.parse(JSON.stringify(entity));
+};
+
+const cloneList = (items = []) => items.map((item) => cloneEntity(item));
+
+const normalizeSnapshot = (snapshot = {}) => ({
+  medications: cloneList(snapshot.medications || []),
+  batches: cloneList(snapshot.batches || [])
+});
+
+const createHistoryEntry = ({
+  actionType,
+  medicationId = null,
+  medicationName = '',
+  batchDeltas = [],
+  beforeSnapshot = {},
+  afterSnapshot = {},
+  metadata = {},
+  note = '',
+  revertible = true
+}) => ({
+  id: crypto.randomUUID(),
+  schemaVersion: HISTORY_SCHEMA_VERSION,
+  actionType,
+  medicationId,
+  medicationName,
+  batchDeltas: cloneList(batchDeltas),
+  beforeSnapshot: normalizeSnapshot(beforeSnapshot),
+  afterSnapshot: normalizeSnapshot(afterSnapshot),
+  metadata: cloneEntity(metadata) || {},
+  note,
+  revertible,
+  timestamp: new Date().toISOString()
+});
+
+const validateExpiryDate = (value) => {
+  if (!EXPIRY_DATE_PATTERN.test(value || '')) return false;
+  const [year, month, day] = value.split('-').map((part) => Number(part));
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+};
+
+const summarizeName = (value = '') => value.trim().toLowerCase();
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useInventory = () => useContext(InventoryContext);
-
-const STORAGE_KEY = 'med_inventory_v1';
 
 export const InventoryProvider = ({ children }) => {
   const [medications, setMedications] = useState([]);
@@ -16,80 +70,88 @@ export const InventoryProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const toast = useToast();
 
-  // Load from Storage on mount
+  const refreshInventoryState = useCallback(async () => {
+    const [loadedMeds, loadedBatches] = await Promise.all([
+      storage.getMedications(),
+      storage.getBatches()
+    ]);
+    setMedications(loadedMeds || []);
+    setBatches(loadedBatches || []);
+    return {
+      medications: loadedMeds || [],
+      batches: loadedBatches || []
+    };
+  }, []);
+
   useEffect(() => {
     const loadData = async () => {
+      setLoading(true);
       try {
-        // 1. Try to load from configured storage
         let loadedMeds = await storage.getMedications();
         let loadedBatches = await storage.getBatches();
 
-        // 2. Migration Check: If IDB is empty, check legacy LocalStorage
-        // Only if we are using IDB (checked via storage.type or just assumption if empty)
         if (storage.type === 'idb' && loadedMeds.length === 0 && loadedBatches.length === 0) {
           const legacyKey = 'med_inventory_v1';
           const legacyData = localStorage.getItem(legacyKey);
           if (legacyData) {
-            // console.log("Migrating data from LocalStorage to IndexedDB...");
-            const { meds, batches: oldBatches } = JSON.parse(legacyData);
-            if (meds) {
-              for (const m of meds) await storage.saveMedication(m);
-              loadedMeds = meds;
-            }
-            if (oldBatches) {
-              await storage.saveBatches(oldBatches);
-              loadedBatches = oldBatches;
-            }
-            // Optional: Allow user to revert? For now, let's keep it safe and NOT delete legacy yet.
-            // localStorage.removeItem(legacyKey); 
-            toast.success("Database migrated to new system!");
+            const parsed = JSON.parse(legacyData);
+            const meds = parsed.meds || [];
+            const legacyBatches = parsed.batches || [];
+            const legacyHistory = parsed.history || [];
+            await storage.applyMutation({
+              replaceAll: {
+                medications: meds,
+                batches: legacyBatches,
+                history: legacyHistory
+              }
+            });
+            loadedMeds = meds;
+            loadedBatches = legacyBatches;
+            toast.success('Database migrated to new system!');
           }
         }
 
         setMedications(loadedMeds || []);
         setBatches(loadedBatches || []);
-      } catch (e) {
-        console.error("Failed to load inventory", e);
-        toast.error("Failed to load data");
+      } catch (error) {
+        console.error('Failed to load inventory', error);
+        toast.error('Failed to load data');
       } finally {
         setLoading(false);
       }
     };
+
     loadData();
-  }, [toast]); // Added toast as dependency
-
-  // Removed the auto-save useEffect because we now save on action.
-  // This prevents race conditions and excessive writes.
-
-  const logActivity = useCallback(async (actionType, data) => {
-    try {
-      const entry = {
-        id: crypto.randomUUID(),
-        actionType, // 'add_medication', 'add_stock', 'consume', 'edit', 'delete'
-        data,       // Buffered object with details
-        timestamp: new Date().toISOString(),
-        // Fallback for older UI
-        details: typeof data === 'string' ? data : ''
-      };
-      await storage.addHistoryEntry(entry);
-    } catch (e) {
-      console.error("Failed to log history", e);
-    }
-  }, []);
+  }, [toast]);
 
   const medicationMap = useMemo(() => {
     const map = new Map();
-    medications.forEach((med) => {
-      map.set(med.id, med);
+    medications.forEach((medication) => {
+      map.set(medication.id, medication);
     });
     return map;
   }, [medications]);
 
+  const activeMedications = useMemo(
+    () => medications.filter((medication) => !medication.archivedAt),
+    [medications]
+  );
+
+  const archivedMedications = useMemo(
+    () => medications.filter((medication) => Boolean(medication.archivedAt)),
+    [medications]
+  );
+
   const batchStatsByMedication = useMemo(() => {
     const stats = {};
 
-    medications.forEach((med) => {
-      stats[med.id] = { totalQty: 0, nextExpiry: null, medBatches: [] };
+    medications.forEach((medication) => {
+      stats[medication.id] = {
+        totalQty: 0,
+        nextExpiry: null,
+        medBatches: [],
+        locations: new Set()
+      };
     });
 
     batches.forEach((batch) => {
@@ -97,18 +159,32 @@ export const InventoryProvider = ({ children }) => {
       if (!entry) return;
 
       entry.medBatches.push(batch);
-      entry.totalQty += batch.currentQuantity;
+      entry.totalQty += Number(batch.currentQuantity || 0);
+      if (batch.location) {
+        entry.locations.add(batch.location);
+      }
 
-      if (batch.currentQuantity <= 0) return;
+      if (Number(batch.currentQuantity) <= 0 || !validateExpiryDate(batch.expiryDate)) {
+        return;
+      }
 
-      const expiry = new Date(`${batch.expiryDate}T00:00`);
+      const expiry = new Date(`${batch.expiryDate}T00:00:00`);
       if (!entry.nextExpiry || expiry < entry.nextExpiry) {
         entry.nextExpiry = expiry;
       }
     });
 
+    Object.values(stats).forEach((entry) => {
+      entry.medBatches.sort((a, b) => {
+        const dateA = validateExpiryDate(a.expiryDate) ? new Date(`${a.expiryDate}T00:00:00`) : new Date('9999-12-31');
+        const dateB = validateExpiryDate(b.expiryDate) ? new Date(`${b.expiryDate}T00:00:00`) : new Date('9999-12-31');
+        return dateA - dateB;
+      });
+      entry.locations = Array.from(entry.locations);
+    });
+
     return stats;
-  }, [medications, batches]);
+  }, [batches, medications]);
 
   const stats = useMemo(() => {
     let expiringSoonCount = 0;
@@ -118,8 +194,8 @@ export const InventoryProvider = ({ children }) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    medications.forEach((med) => {
-      const medStats = batchStatsByMedication[med.id] || { totalQty: 0, nextExpiry: null };
+    activeMedications.forEach((medication) => {
+      const medStats = batchStatsByMedication[medication.id] || { totalQty: 0, nextExpiry: null };
 
       if (medStats.nextExpiry) {
         const daysUntilExpiry = (medStats.nextExpiry - today) / (1000 * 60 * 60 * 24);
@@ -128,15 +204,16 @@ export const InventoryProvider = ({ children }) => {
         }
       }
 
-      if (medStats.totalQty <= med.lowStockThreshold) {
+      const lowThreshold = getLowStockThresholdQuantity(medication);
+      if (medStats.totalQty <= lowThreshold) {
         lowStockCount += 1;
       }
 
       const runout = calculateRunoutDate(
         medStats.totalQty,
-        med.usageRate,
-        med.usageFrequency,
-        med.lowStockThreshold
+        medication.usageRate,
+        medication.usageFrequency,
+        lowThreshold
       );
 
       if (runout && runout.daysUntilEmpty < 7) {
@@ -149,307 +226,752 @@ export const InventoryProvider = ({ children }) => {
       lowStockCount,
       projectedEmptyCount
     };
-  }, [medications, batchStatsByMedication]);
+  }, [activeMedications, batchStatsByMedication]);
 
-  const addMedication = useCallback(async (med) => {
-    const newId = crypto.randomUUID();
-    const newMed = {
-      ...med,
-      id: newId,
-      groupId: med.groupId || newId
+  const dashboardQueues = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const ranked = activeMedications.map((medication) => {
+      const medStats = batchStatsByMedication[medication.id] || { totalQty: 0, nextExpiry: null, medBatches: [] };
+      const runout = calculateRunoutDate(
+        medStats.totalQty,
+        medication.usageRate,
+        medication.usageFrequency,
+        getLowStockThresholdQuantity(medication)
+      );
+      const nextExpiryDays = medStats.nextExpiry
+        ? (medStats.nextExpiry - today) / (1000 * 60 * 60 * 24)
+        : null;
+      const lowStock = medStats.totalQty <= getLowStockThresholdQuantity(medication);
+      const expiringSoon = typeof nextExpiryDays === 'number' && nextExpiryDays < 30;
+      const refillSoon = Boolean(runout && runout.daysUntilEmpty < 14);
+
+      const urgencyScore = [
+        lowStock ? 40 : 0,
+        expiringSoon ? 30 - Math.max(nextExpiryDays || 0, 0) : 0,
+        refillSoon ? 20 - Math.max(runout?.daysUntilEmpty || 0, 0) : 0
+      ].reduce((sum, value) => sum + value, 0);
+
+      return {
+        medication,
+        medStats,
+        runout,
+        lowStock,
+        expiringSoon,
+        refillSoon,
+        nextExpiryDays,
+        urgencyScore
+      };
+    }).sort((a, b) => b.urgencyScore - a.urgencyScore || a.medication.name.localeCompare(b.medication.name));
+
+    return {
+      attention: ranked.filter((item) => item.lowStock || item.expiringSoon || item.refillSoon).slice(0, 5),
+      expiring: ranked.filter((item) => item.expiringSoon).slice(0, 5),
+      refill: ranked.filter((item) => item.refillSoon || item.lowStock).slice(0, 5)
+    };
+  }, [activeMedications, batchStatsByMedication]);
+
+  const validateDataHealth = useCallback(async (source = null) => {
+    const currentMedications = source?.medications || medications;
+    const currentBatches = source?.batches || batches;
+    const currentHistory = source?.history || await storage.getAllHistory();
+
+    const medicationIds = new Set(currentMedications.map((medication) => medication.id));
+    const duplicateNameCounts = currentMedications.reduce((map, medication) => {
+      const key = summarizeName(medication.name);
+      if (!key) return map;
+      map.set(key, (map.get(key) || 0) + 1);
+      return map;
+    }, new Map());
+
+    const orphanedBatches = currentBatches.filter((batch) => !medicationIds.has(batch.medicationId));
+    const invalidExpiryBatches = currentBatches.filter((batch) => !validateExpiryDate(batch.expiryDate));
+    const missingUsageMedications = currentMedications.filter((medication) => !medication.archivedAt && !Number(medication.usageRate));
+    const duplicateMedicationNames = currentMedications.filter((medication) => duplicateNameCounts.get(summarizeName(medication.name)) > 1);
+    const archivedCount = currentMedications.filter((medication) => medication.archivedAt).length;
+
+    return {
+      orphanedBatches,
+      invalidExpiryBatches,
+      missingUsageMedications,
+      duplicateMedicationNames,
+      archivedCount,
+      historyCount: currentHistory.length
+    };
+  }, [batches, medications]);
+
+  const analyzeBackup = useCallback(async (backup, mode = 'merge') => {
+    if (!backup || !Array.isArray(backup.medications) || !Array.isArray(backup.batches)) {
+      throw new Error('Invalid backup format');
+    }
+
+    const incomingHistory = Array.isArray(backup.history) ? backup.history : [];
+    const health = await validateDataHealth({
+      medications: backup.medications,
+      batches: backup.batches,
+      history: incomingHistory
+    });
+
+    const currentNameMap = new Map();
+    medications.forEach((medication) => {
+      currentNameMap.set(summarizeName(medication.name), medication);
+    });
+
+    const keptMedicationIds = new Set();
+    const skippedMedications = [];
+    const medicationsToImport = [];
+
+    backup.medications.forEach((medication) => {
+      const normalizedName = summarizeName(medication.name);
+      const duplicateByName = normalizedName && currentNameMap.has(normalizedName) && currentNameMap.get(normalizedName).id !== medication.id;
+
+      if (mode === 'merge' && duplicateByName) {
+        skippedMedications.push({
+          id: medication.id,
+          name: medication.name,
+          reason: 'duplicate-name'
+        });
+        return;
+      }
+
+      medicationsToImport.push(cloneEntity(medication));
+      keptMedicationIds.add(medication.id);
+    });
+
+    const batchesToImport = [];
+    const skippedBatches = [];
+
+    backup.batches.forEach((batch) => {
+      if (!keptMedicationIds.has(batch.medicationId)) {
+        skippedBatches.push({
+          id: batch.id,
+          reason: 'orphaned-medication'
+        });
+        return;
+      }
+      if (!validateExpiryDate(batch.expiryDate)) {
+        skippedBatches.push({
+          id: batch.id,
+          reason: 'invalid-expiry'
+        });
+        return;
+      }
+      batchesToImport.push(cloneEntity(batch));
+    });
+
+    const skippedHistoryEntries = [];
+    const shouldDeduplicateHistory = mode === 'merge' || mode === 'preview-only';
+    const existingHistoryIds = shouldDeduplicateHistory
+      ? new Set((await storage.getAllHistory()).map((entry) => entry.id))
+      : new Set();
+    const historyToImport = incomingHistory.filter((entry) => {
+      if (entry.medicationId && !keptMedicationIds.has(entry.medicationId)) {
+        return false;
+      }
+      if (!entry.id) {
+        skippedHistoryEntries.push({ id: null, reason: 'missing-id' });
+        return false;
+      }
+      if (shouldDeduplicateHistory && existingHistoryIds.has(entry.id)) {
+        skippedHistoryEntries.push({ id: entry.id, reason: 'duplicate-history-id' });
+        return false;
+      }
+      return true;
+    });
+
+    const summary = {
+      medicationsToCreate: mode === 'replace' ? medicationsToImport.length : medicationsToImport.filter((medication) => !medicationMap.has(medication.id)).length,
+      medicationsToUpdate: mode === 'merge' ? medicationsToImport.filter((medication) => medicationMap.has(medication.id)).length : 0,
+      batchesToImport: batchesToImport.length,
+      historyToImport: historyToImport.length,
+      skippedMedications: skippedMedications.length,
+      skippedBatches: skippedBatches.length,
+      skippedHistory: skippedHistoryEntries.length
     };
 
-    // Optimistic Update
-    setMedications(prev => [...prev, newMed]);
+    return {
+      mode,
+      summary,
+      issues: {
+        orphanedBatches: health.orphanedBatches,
+        invalidExpiryBatches: health.invalidExpiryBatches,
+        duplicateMedicationNames: skippedMedications,
+        skippedBatches,
+        skippedHistoryEntries
+      },
+      sanitizedBackup: {
+        schemaVersion: backup.schemaVersion || HISTORY_SCHEMA_VERSION,
+        exportedAt: backup.exportedAt || new Date().toISOString(),
+        medications: medicationsToImport,
+        batches: batchesToImport,
+        history: historyToImport,
+        preferences: cloneEntity(backup.preferences) || {}
+      }
+    };
+  }, [medicationMap, medications, validateDataHealth]);
 
-    // Async Save
-    try {
-      await storage.saveMedication(newMed);
-      await logActivity('add_medication', {
-        medicationId: newMed.id,
-        name: newMed.name,
-        unit: newMed.defaultUnit
-      });
-      return newMed.id;
-    } catch (err) {
-      console.error("Save failed", err);
-      toast.error("Failed to save medication");
-      throw err;
+  const getBackupData = useCallback(async () => {
+    const [allMedications, allBatches, allHistory] = await Promise.all([
+      storage.getMedications(),
+      storage.getBatches(),
+      storage.getAllHistory()
+    ]);
+
+    return {
+      schemaVersion: HISTORY_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      medications: cloneList(allMedications),
+      batches: cloneList(allBatches),
+      history: cloneList(allHistory),
+      preferences: getStoredPreferences()
+    };
+  }, []);
+
+  const applyMutationAndRefresh = useCallback(async (mutation) => {
+    await storage.applyMutation(mutation);
+    await refreshInventoryState();
+  }, [refreshInventoryState]);
+
+  const createMedicationWithBatch = useCallback(async ({ medication, batch, note = '' }) => {
+    const name = medication?.name?.trim();
+    if (!name) {
+      throw new Error('Medication name is required');
     }
-  }, [logActivity, toast]);
-
-  const addBatch = useCallback(async (batch, medNameOverride = null) => {
+    if (!batch?.expiryDate || !validateExpiryDate(batch.expiryDate)) {
+      throw new Error('A valid expiration date is required');
+    }
     if (Number(batch.initialQuantity) <= 0) {
-      toast.error('Quantity must be greater than 0');
       throw new Error('Quantity must be greater than 0');
     }
-    const newBatch = {
-      ...batch,
-      id: crypto.randomUUID(),
-      dateAdded: new Date().toISOString(),
-      currentQuantity: Number(batch.initialQuantity)
+
+    const duplicate = activeMedications.find((item) => summarizeName(item.name) === summarizeName(name));
+    if (duplicate) {
+      throw new Error(`${name} already exists. Use the restock flow instead.`);
+    }
+
+    const medicationId = crypto.randomUUID();
+    const newMedication = {
+      ...cloneEntity(medication),
+      id: medicationId,
+      groupId: medication.groupId || medicationId,
+      archivedAt: null
     };
 
-    setBatches(prev => [...prev, newBatch]);
+    const newBatch = {
+      ...cloneEntity(batch),
+      id: crypto.randomUUID(),
+      medicationId,
+      initialQuantity: Number(batch.initialQuantity),
+      currentQuantity: Number(batch.initialQuantity),
+      dateAdded: new Date().toISOString()
+    };
 
-    try {
-      await storage.saveBatch(newBatch);
-      // Use override if provided (fixes race condition in new med creation)
-      let name = medNameOverride;
-      if (!name) {
-        name = medicationMap.get(batch.medicationId)?.name || 'Unknown Med';
-      }
-      await logActivity('add_stock', { medicationId: batch.medicationId, name, quantity: batch.initialQuantity });
-      toast.success('Stock added successfully!');
-    } catch (e) {
-      toast.error("Failed to save stock");
-      throw e;
+    const historyEntry = createHistoryEntry({
+      actionType: 'create_medication',
+      medicationId,
+      medicationName: newMedication.name,
+      note,
+      beforeSnapshot: {},
+      afterSnapshot: { medications: [newMedication], batches: [newBatch] },
+      batchDeltas: [{
+        batchId: newBatch.id,
+        quantityDelta: Number(newBatch.currentQuantity),
+        beforeQuantity: 0,
+        afterQuantity: Number(newBatch.currentQuantity),
+        expiryDate: newBatch.expiryDate,
+        location: newBatch.location
+      }]
+    });
+
+    await applyMutationAndRefresh({
+      medicationsToPut: [newMedication],
+      batchesToPut: [newBatch],
+      historyToPut: [historyEntry]
+    });
+
+    return { medication: newMedication, batch: newBatch };
+  }, [activeMedications, applyMutationAndRefresh]);
+
+  const addBatchToMedication = useCallback(async ({ medicationId, batch, note = '' }) => {
+    const medication = medicationMap.get(medicationId);
+    if (!medication || medication.archivedAt) {
+      throw new Error('Medication was not found');
     }
-  }, [logActivity, medicationMap, toast]);
+    if (!batch?.expiryDate || !validateExpiryDate(batch.expiryDate)) {
+      throw new Error('A valid expiration date is required');
+    }
+    if (Number(batch.initialQuantity) <= 0) {
+      throw new Error('Quantity must be greater than 0');
+    }
 
-  const consumeMedication = useCallback(async (medicationId, amount) => {
-    if (amount <= 0) {
-      toast.warning('Please enter a valid amount.');
-      return;
+    const newBatch = {
+      ...cloneEntity(batch),
+      id: crypto.randomUUID(),
+      medicationId,
+      initialQuantity: Number(batch.initialQuantity),
+      currentQuantity: Number(batch.initialQuantity),
+      dateAdded: new Date().toISOString()
+    };
+
+    const historyEntry = createHistoryEntry({
+      actionType: 'add_stock',
+      medicationId,
+      medicationName: medication.name,
+      note,
+      beforeSnapshot: {},
+      afterSnapshot: { batches: [newBatch] },
+      batchDeltas: [{
+        batchId: newBatch.id,
+        quantityDelta: Number(newBatch.currentQuantity),
+        beforeQuantity: 0,
+        afterQuantity: Number(newBatch.currentQuantity),
+        expiryDate: newBatch.expiryDate,
+        location: newBatch.location
+      }]
+    });
+
+    await applyMutationAndRefresh({
+      batchesToPut: [newBatch],
+      historyToPut: [historyEntry]
+    });
+
+    return { batch: newBatch, medication };
+  }, [applyMutationAndRefresh, medicationMap]);
+
+  const editMedication = useCallback(async (id, updates, note = '') => {
+    const medication = medicationMap.get(id);
+    if (!medication) {
+      throw new Error('Medication was not found');
+    }
+
+    const updatedMedication = {
+      ...cloneEntity(medication),
+      ...cloneEntity(updates)
+    };
+
+    const historyEntry = createHistoryEntry({
+      actionType: 'edit_medication',
+      medicationId: id,
+      medicationName: updatedMedication.name,
+      note,
+      beforeSnapshot: { medications: [medication] },
+      afterSnapshot: { medications: [updatedMedication] },
+      batchDeltas: []
+    });
+
+    await applyMutationAndRefresh({
+      medicationsToPut: [updatedMedication],
+      historyToPut: [historyEntry]
+    });
+
+    return updatedMedication;
+  }, [applyMutationAndRefresh, medicationMap]);
+
+  const updateBatch = useCallback(async (batchId, updates, note = '') => {
+    const batch = batches.find((item) => item.id === batchId);
+    if (!batch) {
+      throw new Error('Batch was not found');
+    }
+
+    const updatedBatch = {
+      ...cloneEntity(batch),
+      ...cloneEntity(updates)
+    };
+
+    if (!validateExpiryDate(updatedBatch.expiryDate)) {
+      throw new Error('A valid expiration date is required');
+    }
+    if (Number(updatedBatch.currentQuantity) < 0) {
+      throw new Error('Quantity cannot be negative');
+    }
+
+    const medication = medicationMap.get(batch.medicationId);
+    const historyEntry = createHistoryEntry({
+      actionType: 'edit_batch',
+      medicationId: batch.medicationId,
+      medicationName: medication?.name || 'Medication',
+      note,
+      beforeSnapshot: { batches: [batch] },
+      afterSnapshot: { batches: [updatedBatch] },
+      batchDeltas: [{
+        batchId: batch.id,
+        quantityDelta: Number(updatedBatch.currentQuantity) - Number(batch.currentQuantity),
+        beforeQuantity: Number(batch.currentQuantity),
+        afterQuantity: Number(updatedBatch.currentQuantity),
+        expiryDate: updatedBatch.expiryDate,
+        location: updatedBatch.location
+      }]
+    });
+
+    await applyMutationAndRefresh({
+      batchesToPut: [updatedBatch],
+      historyToPut: [historyEntry]
+    });
+
+    return updatedBatch;
+  }, [applyMutationAndRefresh, batches, medicationMap]);
+
+  const discardBatch = useCallback(async (batchId, note = 'Discarded batch') => {
+    const batch = batches.find((item) => item.id === batchId);
+    if (!batch) {
+      throw new Error('Batch was not found');
+    }
+
+    const medication = medicationMap.get(batch.medicationId);
+    const historyEntry = createHistoryEntry({
+      actionType: 'discard_batch',
+      medicationId: batch.medicationId,
+      medicationName: medication?.name || 'Medication',
+      note,
+      beforeSnapshot: { batches: [batch] },
+      afterSnapshot: {},
+      batchDeltas: [{
+        batchId: batch.id,
+        quantityDelta: -Number(batch.currentQuantity),
+        beforeQuantity: Number(batch.currentQuantity),
+        afterQuantity: 0,
+        expiryDate: batch.expiryDate,
+        location: batch.location
+      }]
+    });
+
+    await applyMutationAndRefresh({
+      batchIdsToDelete: [batch.id],
+      historyToPut: [historyEntry]
+    });
+  }, [applyMutationAndRefresh, batches, medicationMap]);
+
+  const consumeMedication = useCallback(async (medicationId, amount, note = '') => {
+    if (Number(amount) <= 0) {
+      throw new Error('Please enter a valid amount');
+    }
+
+    const medication = medicationMap.get(medicationId);
+    if (!medication || medication.archivedAt) {
+      throw new Error('Medication was not found');
     }
 
     const totalAvailable = batchStatsByMedication[medicationId]?.totalQty || 0;
-
-    if (amount > totalAvailable) {
-      toast.error(`Not enough stock! Available: ${totalAvailable}`);
-      return;
+    if (Number(amount) > totalAvailable) {
+      throw new Error(`Not enough stock. Available: ${totalAvailable}`);
     }
 
-    let amountNeeded = amount;
-    // Clone specifically the batches we need to modify? No, easier to clone all or map.
-    // Let's do immutability correctly.
-    // 1. Get relevant batches sorted
-    let sortedIndices = batches
-      .map((b, i) => ({ ...b, originalIndex: i }))
-      .filter(b => b.medicationId === medicationId && b.currentQuantity > 0)
+    let amountNeeded = Number(amount);
+    const eligibleBatches = (batchStatsByMedication[medicationId]?.medBatches || [])
+      .filter((batch) => Number(batch.currentQuantity) > 0)
       .sort((a, b) => {
-        const dateA = new Date(a.expiryDate);
-        const dateB = new Date(b.expiryDate);
-        if (isNaN(dateA.getTime())) return 1;
-        if (isNaN(dateB.getTime())) return -1;
+        const dateA = validateExpiryDate(a.expiryDate) ? new Date(`${a.expiryDate}T00:00:00`) : new Date('9999-12-31');
+        const dateB = validateExpiryDate(b.expiryDate) ? new Date(`${b.expiryDate}T00:00:00`) : new Date('9999-12-31');
         return dateA - dateB;
       });
 
-    if (sortedIndices.length === 0) {
-      toast.error("No stock available!");
-      return;
-    }
+    const beforeBatches = [];
+    const afterBatches = [];
+    const batchDeltas = [];
 
-    const newBatches = [...batches];
-    const changedBatches = [];
+    eligibleBatches.forEach((batch) => {
+      if (amountNeeded <= 0) return;
+      const takeAmount = Math.min(Number(batch.currentQuantity), amountNeeded);
+      if (takeAmount <= 0) return;
+      const updatedBatch = {
+        ...cloneEntity(batch),
+        currentQuantity: Number(batch.currentQuantity) - takeAmount
+      };
 
-    for (let batch of sortedIndices) {
-      if (amountNeeded <= 0) break;
-      const takeAmount = Math.min(batch.currentQuantity, amountNeeded);
-
-      const newBatch = { ...newBatches[batch.originalIndex] };
-      newBatch.currentQuantity -= takeAmount;
-
-      newBatches[batch.originalIndex] = newBatch;
-      changedBatches.push(newBatch);
-
-      amountNeeded -= takeAmount;
-    }
-
-    setBatches(newBatches);
-
-    // Persist changes
-    try {
-      await storage.saveBatches(changedBatches);
-      const name = medicationMap.get(medicationId)?.name || 'Unknown';
-      await logActivity('consume', { medicationId, name, amount });
-      toast.success('Medication consumed.');
-    } catch (e) {
-      console.error("Batch save failed", e);
-      toast.error("Failed to update stock");
-      // Ideally revert state here, but omitting for brevity
-    }
-  }, [batchStatsByMedication, batches, logActivity, medicationMap, toast]);
-
-  const deleteMedication = useCallback(async (id) => {
-    setMedications(prev => prev.filter(m => m.id !== id));
-    setBatches(prev => prev.filter(b => b.medicationId !== id));
-
-    try {
-      await storage.deleteMedication(id);
-      await logActivity('delete', { id });
-      toast.info('Medication record deleted.');
-    } catch {
-      toast.error("Failed to delete");
-    }
-  }, [logActivity, toast]);
-
-  const editMedication = useCallback(async (id, updates) => {
-    // 1. Compute new state purely
-    let updatedMed = null;
-
-    setMedications(prev => {
-      const next = prev.map(m => {
-        if (m.id === id) {
-          updatedMed = { ...m, ...updates };
-          return updatedMed;
-        }
-        return m;
+      beforeBatches.push(cloneEntity(batch));
+      afterBatches.push(updatedBatch);
+      batchDeltas.push({
+        batchId: batch.id,
+        quantityDelta: -takeAmount,
+        beforeQuantity: Number(batch.currentQuantity),
+        afterQuantity: Number(updatedBatch.currentQuantity),
+        expiryDate: batch.expiryDate,
+        location: batch.location
       });
-      return next;
+      amountNeeded -= takeAmount;
     });
 
-    // 2. Side effect: Save once
-    if (updatedMed) {
-      try {
-        await storage.saveMedication(updatedMed);
-        await logActivity('edit', { name: updatedMed.name, updates });
-        toast.success('Medication updated');
-      } catch (err) {
-        console.error("Failed to save edit", err);
-        toast.error("Failed to save changes");
+    const historyEntry = createHistoryEntry({
+      actionType: 'consume',
+      medicationId,
+      medicationName: medication.name,
+      note,
+      beforeSnapshot: { batches: beforeBatches },
+      afterSnapshot: { batches: afterBatches },
+      batchDeltas,
+      metadata: { amount: Number(amount) }
+    });
+
+    await applyMutationAndRefresh({
+      batchesToPut: afterBatches,
+      historyToPut: [historyEntry]
+    });
+  }, [applyMutationAndRefresh, batchStatsByMedication, medicationMap]);
+
+  const archiveMedication = useCallback(async (id, note = '') => {
+    const medication = medicationMap.get(id);
+    if (!medication || medication.archivedAt) {
+      throw new Error('Medication was not found');
+    }
+
+    const archivedMedication = {
+      ...cloneEntity(medication),
+      archivedAt: new Date().toISOString()
+    };
+
+    const historyEntry = createHistoryEntry({
+      actionType: 'archive',
+      medicationId: id,
+      medicationName: medication.name,
+      note,
+      beforeSnapshot: { medications: [medication] },
+      afterSnapshot: { medications: [archivedMedication] }
+    });
+
+    await applyMutationAndRefresh({
+      medicationsToPut: [archivedMedication],
+      historyToPut: [historyEntry]
+    });
+  }, [applyMutationAndRefresh, medicationMap]);
+
+  const restoreMedication = useCallback(async (id, note = '') => {
+    const medication = medicationMap.get(id);
+    if (!medication || !medication.archivedAt) {
+      throw new Error('Medication was not found');
+    }
+
+    const normalizedName = summarizeName(medication.name);
+    if (normalizedName) {
+      const duplicate = activeMedications.find(
+        (item) => item.id !== id && summarizeName(item.name) === normalizedName
+      );
+      if (duplicate) {
+        throw new Error(`${medication.name} already exists. Archive or rename the active entry first.`);
       }
     }
-  }, [logActivity, toast]);
 
-  const linkMedications = useCallback((primaryId, secondaryId) => {
+    const restoredMedication = {
+      ...cloneEntity(medication),
+      archivedAt: null
+    };
+
+    const historyEntry = createHistoryEntry({
+      actionType: 'restore',
+      medicationId: id,
+      medicationName: medication.name,
+      note,
+      beforeSnapshot: { medications: [medication] },
+      afterSnapshot: { medications: [restoredMedication] }
+    });
+
+    await applyMutationAndRefresh({
+      medicationsToPut: [restoredMedication],
+      historyToPut: [historyEntry]
+    });
+  }, [activeMedications, applyMutationAndRefresh, medicationMap]);
+
+  const permanentlyDeleteMedication = useCallback(async (id, note = '') => {
+    const medication = medicationMap.get(id);
+    if (!medication) {
+      throw new Error('Medication was not found');
+    }
+
+    const relatedBatches = batches.filter((batch) => batch.medicationId === id);
+    const historyEntry = createHistoryEntry({
+      actionType: 'delete_permanently',
+      medicationId: id,
+      medicationName: medication.name,
+      note,
+      beforeSnapshot: { medications: [medication], batches: relatedBatches },
+      afterSnapshot: {},
+      revertible: false,
+      batchDeltas: relatedBatches.map((batch) => ({
+        batchId: batch.id,
+        quantityDelta: -Number(batch.currentQuantity),
+        beforeQuantity: Number(batch.currentQuantity),
+        afterQuantity: 0,
+        expiryDate: batch.expiryDate,
+        location: batch.location
+      }))
+    });
+
+    await applyMutationAndRefresh({
+      medicationIdsToDelete: [id],
+      batchIdsToDelete: relatedBatches.map((batch) => batch.id),
+      historyToPut: [historyEntry]
+    });
+  }, [applyMutationAndRefresh, batches, medicationMap]);
+
+  const linkMedications = useCallback(async (primaryId, secondaryId) => {
     const primary = medicationMap.get(primaryId);
-    if (!primary) return;
-    editMedication(secondaryId, { groupId: primary.groupId || primary.id });
-    toast.success('Medications grouped successfully');
-  }, [editMedication, medicationMap, toast]);
-
-  const importData = useCallback(async (data) => {
-    try {
-      if (!data || !Array.isArray(data.medications) || !Array.isArray(data.batches)) {
-        throw new Error("Invalid data format");
-      }
-
-      setLoading(true);
-
-      await Promise.all(data.medications.map((med) => storage.saveMedication(med)));
-      await storage.saveBatches(data.batches);
-
-      // Reload state
-      setMedications(await storage.getMedications());
-      setBatches(await storage.getBatches());
-
-      toast.success(`Imported ${data.medications.length} medications and ${data.batches.length} batches.`);
-    } catch (e) {
-      console.error("Import failed", e);
-      toast.error("Failed to import data: " + e.message);
-    } finally {
-      setLoading(false);
+    if (!primary) {
+      throw new Error('Primary medication was not found');
     }
-  }, [toast]);
+    await editMedication(secondaryId, { groupId: primary.groupId || primary.id }, `Grouped with ${primary.name}`);
+  }, [editMedication, medicationMap]);
 
-  const getStats = useCallback(() => stats, [stats]);
+  const getHistoryLog = useCallback(async (pagination) => storage.getHistory(pagination), []);
 
-  const getHistoryLog = useCallback(async (pagination) => {
-    return await storage.getHistory(pagination);
-  }, []);
+  const getHistoryTotalCount = useCallback(async () => storage.getHistoryCount(), []);
 
-  const getHistoryTotalCount = useCallback(async () => {
-    return await storage.getHistoryCount();
+  const updateHistoryEntry = useCallback(async (id, updates) => {
+    const note = updates.note || '';
+    await storage.updateHistoryEntry(id, {
+      note,
+      data: { note }
+    });
   }, []);
 
   const revertHistoryAction = useCallback(async (item) => {
-    try {
-      if (item.actionType === 'consume') {
-        const { medicationId, amount, name } = item.data;
-        if (!medicationId || !amount) throw new Error("Missing data for revert");
+    if (!item?.revertible || item?.revertedAt) {
+      throw new Error('This entry can no longer be reverted');
+    }
 
-        // Restore stock by creating a 'Restored' batch or updating existing
-        const targetBatch = batches
-          .filter(b => b.medicationId === medicationId)
-          .sort((a, b) => new Date(b.expiryDate) - new Date(a.expiryDate))[0];
+    const allHistory = await storage.getAllHistory();
+    const newerMutation = allHistory.find((entry) => (
+      entry.medicationId === item.medicationId &&
+      entry.id !== item.id &&
+      entry.actionType !== 'revert' &&
+      new Date(entry.timestamp) > new Date(item.timestamp) &&
+      !entry.revertedAt
+    ));
 
-        if (targetBatch) {
-          const updatedBatch = { ...targetBatch, currentQuantity: targetBatch.currentQuantity + Number(amount) };
-          setBatches(prev => prev.map(b => b.id === targetBatch.id ? updatedBatch : b));
-          await storage.saveBatch(updatedBatch);
-        } else {
-          const newBatch = {
-            id: crypto.randomUUID(),
-            medicationId,
-            initialQuantity: amount,
-            currentQuantity: amount,
-            expiryDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
-            location: 'Restored',
-            dateAdded: new Date().toISOString()
-          };
-          setBatches(prev => [...prev, newBatch]);
-          await storage.saveBatch(newBatch);
-        }
+    if (newerMutation) {
+      throw new Error('Revert the newest change for this medication first');
+    }
 
-        await storage.deleteHistoryEntry(item.id);
-        toast.success(`Reverted usage of ${amount} ${name}`);
+    const beforeSnapshot = normalizeSnapshot(item.beforeSnapshot);
+    const afterSnapshot = normalizeSnapshot(item.afterSnapshot);
+    const beforeMedicationIds = new Set(beforeSnapshot.medications.map((medication) => medication.id));
+    const beforeBatchIds = new Set(beforeSnapshot.batches.map((batch) => batch.id));
 
-      } else if (item.actionType === 'add_medication') {
-        const { medicationId, name } = item.data;
+    const updatedEntry = {
+      ...cloneEntity(item),
+      revertible: false,
+      revertedAt: new Date().toISOString()
+    };
 
-        const created = new Date(item.timestamp);
-        const diff = new Date() - created;
-        if (diff > 24 * 60 * 60 * 1000) {
-          toast.error("Cannot revert: Creation was more than 24h ago.");
-          return;
-        }
-
-        await deleteMedication(medicationId);
-        await storage.deleteHistoryEntry(item.id);
-        toast.success(`Reverted creation of ${name}`);
+    const revertEntry = createHistoryEntry({
+      actionType: 'revert',
+      medicationId: item.medicationId,
+      medicationName: item.medicationName,
+      note: `Reverted ${item.actionType}`,
+      revertible: false,
+      beforeSnapshot: afterSnapshot,
+      afterSnapshot: beforeSnapshot,
+      metadata: {
+        revertedEntryId: item.id,
+        revertedActionType: item.actionType
       }
-    } catch (e) {
-      console.error("Revert failed", e);
-      toast.error("Failed to revert action");
-    }
-  }, [batches, deleteMedication, toast]);
+    });
+    updatedEntry.revertedByEntryId = revertEntry.id;
 
-  const updateHistoryEntry = useCallback(async (id, newData) => {
-    try {
-      await storage.updateHistoryEntry(id, newData);
-      toast.success("History record updated");
-    } catch (e) {
-      console.error("Update failed", e);
-      toast.error("Failed to update record");
+    await applyMutationAndRefresh({
+      medicationsToPut: beforeSnapshot.medications,
+      medicationIdsToDelete: afterSnapshot.medications
+        .filter((medication) => !beforeMedicationIds.has(medication.id))
+        .map((medication) => medication.id),
+      batchesToPut: beforeSnapshot.batches,
+      batchIdsToDelete: afterSnapshot.batches
+        .filter((batch) => !beforeBatchIds.has(batch.id))
+        .map((batch) => batch.id),
+      historyToPut: [updatedEntry, revertEntry]
+    });
+  }, [applyMutationAndRefresh]);
+
+  const importData = useCallback(async ({ backup, mode = 'merge' }) => {
+    const analysis = await analyzeBackup(backup, mode);
+    if (mode === 'preview-only') {
+      return analysis;
     }
-  }, [toast]);
+
+    if (mode === 'replace') {
+      await storage.applyMutation({
+        replaceAll: {
+          medications: analysis.sanitizedBackup.medications,
+          batches: analysis.sanitizedBackup.batches,
+          history: analysis.sanitizedBackup.history
+        }
+      });
+      applyStoredPreferences(analysis.sanitizedBackup.preferences);
+      await refreshInventoryState();
+      return analysis;
+    }
+
+    const existingHistoryIds = new Set((await storage.getAllHistory()).map((entry) => entry.id));
+    const historyToPut = analysis.sanitizedBackup.history.filter(
+      (entry) => entry?.id && !existingHistoryIds.has(entry.id)
+    );
+
+    await storage.applyMutation({
+      medicationsToPut: analysis.sanitizedBackup.medications,
+      batchesToPut: analysis.sanitizedBackup.batches,
+      historyToPut
+    });
+    applyStoredPreferences(analysis.sanitizedBackup.preferences);
+    await refreshInventoryState();
+    return analysis;
+  }, [analyzeBackup, refreshInventoryState]);
+
+  const getStats = useCallback(() => stats, [stats]);
+  const getDashboardQueues = useCallback(() => dashboardQueues, [dashboardQueues]);
 
   const value = useMemo(() => ({
     medications,
+    activeMedications,
+    archivedMedications,
     batches,
     batchStatsByMedication,
     loading,
-    addMedication,
-    addBatch,
+    createMedicationWithBatch,
+    addBatchToMedication,
     consumeMedication,
-    deleteMedication,
     editMedication,
+    updateBatch,
+    discardBatch,
+    archiveMedication,
+    restoreMedication,
+    permanentlyDeleteMedication,
     getStats,
+    getDashboardQueues,
     calculateRunoutDate,
     linkMedications,
-    importData,
     getHistoryLog,
     getHistoryTotalCount,
+    updateHistoryEntry,
     revertHistoryAction,
-    updateHistoryEntry
+    getBackupData,
+    analyzeBackup,
+    importData,
+    validateDataHealth
   }), [
     medications,
+    activeMedications,
+    archivedMedications,
     batches,
     batchStatsByMedication,
     loading,
-    addMedication,
-    addBatch,
+    createMedicationWithBatch,
+    addBatchToMedication,
     consumeMedication,
-    deleteMedication,
     editMedication,
+    updateBatch,
+    discardBatch,
+    archiveMedication,
+    restoreMedication,
+    permanentlyDeleteMedication,
     getStats,
+    getDashboardQueues,
     linkMedications,
-    importData,
     getHistoryLog,
     getHistoryTotalCount,
+    updateHistoryEntry,
     revertHistoryAction,
-    updateHistoryEntry
+    getBackupData,
+    analyzeBackup,
+    importData,
+    validateDataHealth
   ]);
 
   return (

@@ -4,152 +4,268 @@ import { Search, X } from 'lucide-react';
 import ConfirmationModal from './ConfirmationModal';
 import MedicationItem from './MedicationItem';
 import MedicationEditForm from './MedicationEditForm';
-import { calculateRunoutDate } from '../utils/calculations';
+import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
+import { useToast } from '../context/ToastContext';
 
-const MedicationList = ({ filter }) => {
-    const { medications, batchStatsByMedication, consumeMedication, deleteMedication, editMedication, linkMedications } = useInventory();
+const FILTER_OPTIONS = [
+    { value: 'all', label: 'All' },
+    { value: 'low', label: 'Low Stock' },
+    { value: 'expiring', label: 'Expiring' },
+    { value: 'projected', label: 'Refill Soon' }
+];
+
+const MedicationList = ({
+    initialFilter = 'all',
+    initialCondition = '',
+    initialTag = '',
+    initialLocation = '',
+    onNavigate
+}) => {
+    const {
+        activeMedications,
+        batchStatsByMedication,
+        consumeMedication,
+        archiveMedication,
+        editMedication,
+        linkMedications,
+        updateBatch,
+        discardBatch
+    } = useInventory();
+    const toast = useToast();
+
     const [expandedId, setExpandedId] = useState(null);
     const [editingId, setEditingId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
-
-    // Modal State
+    const [statusFilter, setStatusFilter] = useState(initialFilter);
+    const [conditionFilter, setConditionFilter] = useState(initialCondition);
+    const [tagFilter, setTagFilter] = useState(initialTag);
+    const [locationFilter, setLocationFilter] = useState(initialLocation);
+    const [sortBy, setSortBy] = useState('name');
     const [modalConfig, setModalConfig] = useState(null);
-
-    // Edit State
     const [editForm, setEditForm] = useState({});
 
-    // --- Actions ---
-
-    const confirmDelete = useCallback((med, totalQty) => {
+    const confirmArchive = useCallback((medication) => {
         setModalConfig({
-            title: 'Delete Medication?',
-            message: totalQty > 0
-                ? `WARNING: This medication has ${totalQty} units remaining. Deleting it will remove all stock history.`
-                : `Are you sure you want to delete ${med.name}?`,
-            type: 'danger',
-            confirmText: 'Delete Forever',
-            onConfirm: () => deleteMedication(med.id)
+            title: 'Archive Medication?',
+            message: `Archive ${medication.name}? Archived medications disappear from inventory but remain restorable in Settings.`,
+            type: 'warning',
+            confirmText: 'Archive',
+            onConfirm: async () => {
+                try {
+                    await archiveMedication(medication.id, 'Archived from inventory');
+                    toast.success(`${medication.name} archived.`);
+                } catch (error) {
+                    toast.error(error.message);
+                }
+            }
         });
-    }, [deleteMedication]);
+    }, [archiveMedication, toast]);
 
     const toggleExpand = useCallback((id) => {
-        setExpandedId(prev => (prev === id ? null : id));
+        setExpandedId((prev) => (prev === id ? null : id));
     }, []);
 
-    const startEditing = useCallback((e, med) => {
-        e.stopPropagation();
-        setEditingId(med.id);
+    const startEditing = useCallback((event, medication) => {
+        event.stopPropagation();
+        setEditingId(medication.id);
         setEditForm({
-            name: med.name,
-            lowStockThreshold: med.lowStockThreshold,
-            usageRate: med.usageRate || '',
-            usageFrequency: med.usageFrequency || 'daily',
+            name: medication.name,
+            lowStockThreshold: medication.lowStockThreshold,
+            usageRate: medication.usageRate || '',
+            usageFrequency: medication.usageFrequency || 'daily',
             usageBasis: 'base',
-            notes: med.notes || '',
-            tags: med.tags || [],
-            images: med.images || [],
-            condition: med.condition || ''
+            notes: medication.notes || '',
+            tags: medication.tags || [],
+            images: medication.images || [],
+            condition: medication.condition || ''
         });
     }, []);
 
-    const cancelEditing = useCallback((e) => {
-        if (e) e.stopPropagation();
+    const cancelEditing = useCallback((event) => {
+        if (event) event.stopPropagation();
         setEditingId(null);
         setEditForm({});
     }, []);
 
-    const saveEditing = useCallback(() => {
-        const med = medications.find(m => m.id === editingId);
-        if (!med) return;
+    const saveEditing = useCallback(async () => {
+        const medication = activeMedications.find((item) => item.id === editingId);
+        if (!medication) return;
 
-        editMedication(editingId, {
-            name: editForm.name,
-            lowStockThreshold: Number(editForm.lowStockThreshold),
-            usageRate: editForm.usageRate ? (
-                med.defaultUnit === 'inhaler' && editForm.usageBasis === 'container'
-                    ? Number(editForm.usageRate) * (Number(med.puffsPerCanister) || 200)
-                    : Number(editForm.usageRate)
-            ) : null,
-            usageFrequency: editForm.usageRate ? editForm.usageFrequency : null,
-            notes: editForm.notes,
-            tags: editForm.tags,
-            images: editForm.images,
-            condition: editForm.condition
-        });
-        setEditingId(null);
-    }, [editForm, editMedication, editingId, medications]);
+        try {
+            await editMedication(editingId, {
+                name: editForm.name,
+                lowStockThreshold: Number(editForm.lowStockThreshold),
+                ...(
+                    editForm.usageRate
+                        ? {
+                            usageRate: medication.defaultUnit === 'inhaler' && editForm.usageBasis === 'container'
+                                ? Number(editForm.usageRate) * (Number(medication.puffsPerCanister) || 200)
+                                : Number(editForm.usageRate),
+                            usageFrequency: editForm.usageFrequency
+                        }
+                        : { usageRate: null, usageFrequency: null }
+                ),
+                notes: editForm.notes,
+                tags: editForm.tags,
+                images: editForm.images,
+                condition: editForm.condition
+            }, 'Edited from inventory');
+            toast.success('Medication updated.');
+            setEditingId(null);
+        } catch (error) {
+            toast.error(error.message);
+        }
+    }, [activeMedications, editForm, editMedication, editingId, toast]);
 
     const handleLink = useCallback((targetId) => {
         setModalConfig({
             title: 'Group Medications',
-            message: "Group this into the selected medication's group?",
+            message: "Group this medication into the selected medication's group?",
             type: 'info',
             confirmText: 'Group',
-            onConfirm: () => {
-                linkMedications(targetId, editingId);
-                setEditingId(null);
+            onConfirm: async () => {
+                try {
+                    await linkMedications(targetId, editingId);
+                    toast.success('Medications grouped.');
+                    setEditingId(null);
+                } catch (error) {
+                    toast.error(error.message);
+                }
             }
         });
-    }, [editingId, linkMedications]);
+    }, [editingId, linkMedications, toast]);
 
     const handleUngroup = useCallback(() => {
         setModalConfig({
             title: 'Ungroup Medication',
-            message: "Remove this medication from its group?",
+            message: 'Remove this medication from its current group?',
             type: 'warning',
             confirmText: 'Ungroup',
-            onConfirm: () => {
-                editMedication(editingId, { groupId: editingId });
-                setEditingId(null);
+            onConfirm: async () => {
+                try {
+                    await editMedication(editingId, { groupId: editingId }, 'Ungrouped medication');
+                    setEditingId(null);
+                    toast.success('Medication ungrouped.');
+                } catch (error) {
+                    toast.error(error.message);
+                }
             }
         });
-    }, [editMedication, editingId]);
+    }, [editMedication, editingId, toast]);
 
-    const getMedStats = useCallback((medId) => (
-        batchStatsByMedication[medId] || { totalQty: 0, nextExpiry: null, medBatches: [] }
+    const getMedStats = useCallback((medicationId) => (
+        batchStatsByMedication[medicationId] || { totalQty: 0, nextExpiry: null, medBatches: [], locations: [] }
+    ), [batchStatsByMedication]);
+
+    const conditionOptions = useMemo(() => (
+        Array.from(new Set(activeMedications.map((medication) => medication.condition).filter(Boolean))).sort()
+    ), [activeMedications]);
+
+    const tagOptions = useMemo(() => (
+        Array.from(new Set(activeMedications.flatMap((medication) => medication.tags || []))).sort()
+    ), [activeMedications]);
+
+    const locationOptions = useMemo(() => (
+        Array.from(new Set(Object.values(batchStatsByMedication).flatMap((entry) => entry.locations || []))).sort()
     ), [batchStatsByMedication]);
 
     const groupedMedications = useMemo(() => {
         const normalizedSearch = searchTerm.trim().toLowerCase();
 
-        const filtered = medications.filter(med => {
-            if (normalizedSearch && !med.name.toLowerCase().includes(normalizedSearch)) {
-                const hasTag = med.tags && med.tags.some(t => t.toLowerCase().includes(normalizedSearch));
-                if (!hasTag) return false;
+        const filtered = activeMedications.filter((medication) => {
+            if (normalizedSearch) {
+                const values = [
+                    medication.name,
+                    medication.condition,
+                    ...(medication.tags || [])
+                ].filter(Boolean).map((value) => value.toLowerCase());
+                if (!values.some((value) => value.includes(normalizedSearch))) {
+                    return false;
+                }
             }
 
-            if (!filter) return true;
+            if (conditionFilter && medication.condition !== conditionFilter) return false;
+            if (tagFilter && !(medication.tags || []).includes(tagFilter)) return false;
+            if (locationFilter && !(getMedStats(medication.id).locations || []).includes(locationFilter)) return false;
 
-            const { totalQty, nextExpiry } = getMedStats(med.id);
-
-            if (filter === 'low') return totalQty <= med.lowStockThreshold;
-            if (filter === 'expiring') return nextExpiry && ((nextExpiry - new Date()) / (1000 * 60 * 60 * 24) < 30);
-
-            if (filter === 'projected') {
-                const runout = calculateRunoutDate(totalQty, med.usageRate, med.usageFrequency, med.lowStockThreshold);
-                return runout && runout.daysUntilEmpty < 7;
+            const { totalQty, nextExpiry } = getMedStats(medication.id);
+            const lowThreshold = getLowStockThresholdQuantity(medication);
+            if (statusFilter === 'low' && totalQty > lowThreshold) return false;
+            if (statusFilter === 'expiring') {
+                if (!nextExpiry) return false;
+                const days = (nextExpiry - new Date()) / (1000 * 60 * 60 * 24);
+                if (days >= 30) return false;
             }
-
+            if (statusFilter === 'projected') {
+                const runout = calculateRunoutDate(totalQty, medication.usageRate, medication.usageFrequency, lowThreshold);
+                if (!runout || runout.daysUntilEmpty >= 14) return false;
+            }
             return true;
         });
 
-        const groups = {};
-        filtered.forEach(med => {
-            const gid = med.groupId || med.id;
-            if (!groups[gid]) groups[gid] = [];
-            groups[gid].push(med);
-        });
+        const groups = filtered.reduce((map, medication) => {
+            const key = medication.groupId || medication.id;
+            if (!map[key]) map[key] = [];
+            map[key].push(medication);
+            return map;
+        }, {});
 
-        const result = [];
-        Object.values(groups).forEach(group => {
-            if (group.length === 0) return;
-            group.sort((a, b) => a.name.localeCompare(b.name));
-            result.push(group);
-        });
+        return Object.values(groups)
+            .map((group) => group.sort((a, b) => a.name.localeCompare(b.name)))
+            .sort((groupA, groupB) => {
+                const groupStats = (group) => {
+                    const totals = group.reduce((sum, medication) => sum + (getMedStats(medication.id).totalQty || 0), 0);
+                    const expiryTimes = group
+                        .map((medication) => getMedStats(medication.id).nextExpiry?.getTime() || Number.MAX_SAFE_INTEGER);
+                    return { totals, earliestExpiry: Math.min(...expiryTimes) };
+                };
 
-        result.sort((a, b) => a[0].name.localeCompare(b[0].name));
-        return result;
-    }, [medications, searchTerm, filter, getMedStats]);
+                if (sortBy === 'stock') {
+                    return groupStats(groupA).totals - groupStats(groupB).totals;
+                }
+                if (sortBy === 'expiry') {
+                    return groupStats(groupA).earliestExpiry - groupStats(groupB).earliestExpiry;
+                }
+                if (sortBy === 'runout') {
+                    const runoutA = calculateRunoutDate(
+                        groupA.reduce((sum, medication) => sum + (getMedStats(medication.id).totalQty || 0), 0),
+                        groupA[0].usageRate,
+                        groupA[0].usageFrequency,
+                        getLowStockThresholdQuantity(groupA[0])
+                    );
+                    const runoutB = calculateRunoutDate(
+                        groupB.reduce((sum, medication) => sum + (getMedStats(medication.id).totalQty || 0), 0),
+                        groupB[0].usageRate,
+                        groupB[0].usageFrequency,
+                        getLowStockThresholdQuantity(groupB[0])
+                    );
+                    return (runoutA?.daysUntilEmpty || Number.MAX_SAFE_INTEGER) - (runoutB?.daysUntilEmpty || Number.MAX_SAFE_INTEGER);
+                }
+                return groupA[0].name.localeCompare(groupB[0].name);
+            });
+    }, [activeMedications, conditionFilter, getMedStats, locationFilter, searchTerm, sortBy, statusFilter, tagFilter]);
+
+    const handleConsume = async (medicationId, amount) => {
+        try {
+            await consumeMedication(medicationId, amount, 'Taken from inventory');
+            toast.success('Medication consumed.');
+        } catch (error) {
+            toast.error(error.message);
+        }
+    };
+
+    const handleBatchSave = async (batchId, updates) => {
+        await updateBatch(batchId, updates, 'Updated batch from inventory');
+    };
+
+    const handleBatchDiscard = async (batchId) => {
+        try {
+            await discardBatch(batchId);
+            toast.success('Batch discarded.');
+        } catch (error) {
+            toast.error(error.message);
+        }
+    };
 
     return (
         <div className="medication-list">
@@ -163,59 +279,118 @@ const MedicationList = ({ filter }) => {
                 confirmText={modalConfig?.confirmText}
             />
 
-            {/* Search Bar */}
-            <div style={{ position: 'relative', marginBottom: '1rem' }}>
-                <Search size={20} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input
-                    type="text"
-                    className="form-input"
-                    placeholder="Search inventory..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    style={{ paddingLeft: 40, width: '100%' }}
-                />
-                {searchTerm && (
-                    <button
-                        onClick={() => setSearchTerm('')}
-                        style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                    >
-                        <X size={16} />
-                    </button>
-                )}
+            <div className="inventory-toolbar">
+                <div className="inventory-search">
+                    <Search size={20} className="inventory-search-icon" />
+                    <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Search inventory..."
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                    />
+                    {searchTerm && (
+                        <button className="inventory-search-clear" onClick={() => setSearchTerm('')}>
+                            <X size={16} />
+                        </button>
+                    )}
+                </div>
+
+                <div className="filter-chip-row">
+                    {FILTER_OPTIONS.map((option) => (
+                        <button
+                            key={option.value}
+                            type="button"
+                            className={`filter-chip ${statusFilter === option.value ? 'active' : ''}`}
+                            onClick={() => setStatusFilter(option.value)}
+                        >
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="inventory-filter-grid">
+                    <select className="form-input" value={conditionFilter} onChange={(event) => setConditionFilter(event.target.value)}>
+                        <option value="">All conditions</option>
+                        {conditionOptions.map((condition) => (
+                            <option key={condition} value={condition}>{condition}</option>
+                        ))}
+                    </select>
+                    <select className="form-input" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
+                        <option value="">All tags</option>
+                        {tagOptions.map((tag) => (
+                            <option key={tag} value={tag}>{tag}</option>
+                        ))}
+                    </select>
+                    <select className="form-input" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}>
+                        <option value="">All locations</option>
+                        {locationOptions.map((location) => (
+                            <option key={location} value={location}>{location}</option>
+                        ))}
+                    </select>
+                    <select className="form-input" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+                        <option value="name">Sort: Name</option>
+                        <option value="expiry">Sort: Soonest expiry</option>
+                        <option value="stock">Sort: Lowest stock</option>
+                        <option value="runout">Sort: Soonest runout</option>
+                    </select>
+                </div>
             </div>
 
             {groupedMedications.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
-                    {searchTerm ? 'No matches found.' : 'No medications found. Add some!'}
+                    {searchTerm ? 'No matches found.' : 'No medications match these filters.'}
                 </div>
             ) : (
                 <div className="medication-groups">
-                    {groupedMedications.map(group => {
+                    {groupedMedications.map((group) => {
                         const isGroup = group.length > 1;
+                        const groupTotal = group.reduce((sum, medication) => sum + (getMedStats(medication.id).totalQty || 0), 0);
+                        const nextExpiry = group
+                            .map((medication) => getMedStats(medication.id).nextExpiry)
+                            .filter(Boolean)
+                            .sort((a, b) => a - b)[0];
+
                         return (
                             <div key={group[0].groupId || group[0].id} className={`med-group-container ${isGroup ? 'grouped' : ''}`}>
-                                {group.map(med => (
+                                {isGroup && (
+                                    <div className="group-summary-row">
+                                        <div>
+                                            <strong>{group[0].name}</strong>
+                                            <span>{group.length} grouped medications</span>
+                                        </div>
+                                        <div>
+                                            <strong>{groupTotal}</strong>
+                                            <span>{nextExpiry ? `Next expiry ${nextExpiry.toLocaleDateString()}` : 'No valid expiry'}</span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {group.map((medication) => (
                                     <MedicationItem
-                                        key={med.id}
-                                        med={med}
+                                        key={medication.id}
+                                        med={medication}
                                         isGroup={isGroup}
-                                        medStats={getMedStats(med.id)}
-                                        isEditing={editingId === med.id}
+                                        medStats={getMedStats(medication.id)}
+                                        isEditing={editingId === medication.id}
                                         onEditStart={startEditing}
-                                        isExpanded={expandedId === med.id}
+                                        isExpanded={expandedId === medication.id}
                                         onToggleExpand={toggleExpand}
-                                        onDelete={confirmDelete}
-                                        onConsume={consumeMedication}
+                                        onArchive={confirmArchive}
+                                        onConsume={handleConsume}
+                                        onQuickRestock={(medicationId) => onNavigate?.('add', { mode: 'restock', medicationId })}
+                                        onAddToShopping={(medicationId) => onNavigate?.('shopping-list', { medicationId })}
+                                        onBatchSave={handleBatchSave}
+                                        onDiscardBatch={handleBatchDiscard}
                                     >
-                                        {/* Pass Edit Form as Child */}
-                                        {editingId === med.id && (
+                                        {editingId === medication.id && (
                                             <MedicationEditForm
-                                                med={med}
+                                                med={medication}
                                                 editForm={editForm}
                                                 setEditForm={setEditForm}
                                                 onSave={saveEditing}
                                                 onCancel={cancelEditing}
-                                                medications={medications}
+                                                medications={activeMedications}
                                                 onLink={handleLink}
                                                 onUngroup={handleUngroup}
                                             />

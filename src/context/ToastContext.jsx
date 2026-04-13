@@ -34,7 +34,7 @@ export const ToastProvider = ({ children }) => {
             <div
                 style={{
                     position: 'fixed',
-                    bottom: '80px', // Above bottom nav
+                    bottom: '104px',
                     left: '50%',
                     transform: 'translateX(-50%)',
                     zIndex: 9999,

@@ -1,209 +1,245 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import {
+    History,
+    Plus,
+    Edit,
+    Activity,
+    Package,
+    ChevronLeft,
+    ChevronRight,
+    RotateCcw,
+    X,
+    Archive,
+    Undo2,
+    Eye
+} from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
-import { History, Plus, Trash2, Edit, Activity, Package, ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react';
+import { useToast } from '../context/ToastContext';
 
 const ITEMS_PER_PAGE = 20;
+const getEntryNote = (item) => item?.note ?? item?.data?.note ?? '';
 
 const HistoryView = () => {
-    const { getHistoryLog, getHistoryTotalCount, revertHistoryAction, updateHistoryEntry } = useInventory();
+    const {
+        getHistoryLog,
+        getHistoryTotalCount,
+        revertHistoryAction,
+        updateHistoryEntry
+    } = useInventory();
+    const toast = useToast();
+
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [currentPage, setCurrentPage] = useState(1);
     const [totalCount, setTotalCount] = useState(0);
-
-    // Edit Modal State
     const [editingItem, setEditingItem] = useState(null);
-    const [editData, setEditData] = useState({});
+    const [note, setNote] = useState('');
+    const [detailItem, setDetailItem] = useState(null);
 
     const loadHistory = useCallback(async () => {
         setLoading(true);
         try {
             const count = await getHistoryTotalCount();
             setTotalCount(count);
-
             const offset = (currentPage - 1) * ITEMS_PER_PAGE;
-            // Fetch only the needed slice
             const data = await getHistoryLog({ limit: ITEMS_PER_PAGE, offset });
-
-            // Data is already sorted by backend (newest first)
             setHistory(data);
         } catch (error) {
-            console.error("Failed to load history", error);
+            console.error('Failed to load history', error);
+            toast.error('Failed to load history');
         } finally {
             setLoading(false);
         }
-    }, [currentPage, getHistoryLog, getHistoryTotalCount]);
+    }, [currentPage, getHistoryLog, getHistoryTotalCount, toast]);
 
     useEffect(() => {
         loadHistory();
     }, [loadHistory]);
 
     const handleRevert = async (item) => {
-        if (window.confirm("Are you sure you want to revert this action? This will undo the changes.")) {
+        try {
             await revertHistoryAction(item);
+            toast.success('Change reverted.');
             loadHistory();
+        } catch (error) {
+            toast.error(error.message);
         }
     };
 
     const handleEditStart = (item) => {
         setEditingItem(item);
-        // Flattens structure for simple editing
-        setEditData({
-            timestamp: item.timestamp,
-            note: item.data?.note || '',
-            // We can add more fields if needed
-        });
+        setNote(getEntryNote(item));
     };
 
     const handleEditSave = async () => {
         if (!editingItem) return;
-
-        // Construct updates. We keep it simple: Timestamp change or Note/Data change.
-        await updateHistoryEntry(editingItem.id, {
-            timestamp: editData.timestamp,
-            data: { ...editingItem.data, note: editData.note }
-        });
-
-        setEditingItem(null);
-        loadHistory();
-    };
-
-    const isRevertible = (item) => {
-        if (item.actionType === 'consume') return true;
-        if (item.actionType === 'add_medication') {
-            // Only recent (< 24h)
-            const diff = new Date() - new Date(item.timestamp);
-            return diff < 24 * 60 * 60 * 1000;
+        try {
+            await updateHistoryEntry(editingItem.id, { note });
+            toast.success('History note updated.');
+            setEditingItem(null);
+            loadHistory();
+        } catch (error) {
+            toast.error(error.message);
         }
-        return false;
     };
+
+    const isRevertible = (item) => Boolean(item.revertible && !item.revertedAt && item.actionType !== 'revert');
 
     const getIcon = (type) => {
         switch (type) {
-            case 'add_medication': return <Plus size={16} color="var(--success)" />;
+            case 'create_medication': return <Plus size={16} color="var(--success)" />;
             case 'add_stock': return <Package size={16} color="var(--primary)" />;
             case 'consume': return <Activity size={16} color="#a855f7" />;
-            case 'delete': return <Trash2 size={16} color="var(--danger)" />;
-            case 'edit': return <Edit size={16} color="var(--warning)" />;
+            case 'edit_medication':
+            case 'edit_batch': return <Edit size={16} color="var(--warning)" />;
+            case 'archive':
+            case 'restore':
+            case 'delete_permanently': return <Archive size={16} color="var(--danger)" />;
+            case 'discard_batch': return <Archive size={16} color="var(--warning)" />;
+            case 'revert': return <Undo2 size={16} color="var(--success)" />;
             default: return <History size={16} />;
         }
     };
 
-    const formatDate = (isoString) => {
-        return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    };
-
-    const renderDetails = (item) => {
-        if (typeof item.data === 'undefined' && item.details) {
-            return item.details;
-        }
-
-        const data = item.data || {};
-        const { actionType } = item;
-        const boldStyle = { color: 'var(--text-primary)', fontWeight: 600 };
-
-        let content;
-        switch (actionType) {
-            case 'add_medication':
-                content = <span>Created medication <span style={boldStyle}>{data.name}</span></span>;
-                break;
+    const describeEntry = (item) => {
+        const batchCount = item.batchDeltas?.length || 0;
+        switch (item.actionType) {
+            case 'create_medication':
+                return `Created ${item.medicationName} with ${batchCount} starting batch`;
             case 'add_stock':
-                content = <span>Added <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{data.quantity}</span> units to <span style={boldStyle}>{data.name}</span></span>;
-                break;
+                return `Added stock to ${item.medicationName}`;
             case 'consume':
-                content = <span>Took <span style={{ color: '#a855f7', fontWeight: 600 }}>{data.amount}</span> of <span style={boldStyle}>{data.name}</span></span>;
-                break;
-            case 'edit':
-                content = <span>Updated details for <span style={boldStyle}>{data.name}</span></span>;
-                break;
-            case 'delete':
-                content = <span>Deleted medication record</span>;
-                break;
+                return `Consumed stock from ${item.medicationName}`;
+            case 'edit_medication':
+                return `Updated ${item.medicationName}`;
+            case 'edit_batch':
+                return `Updated a batch for ${item.medicationName}`;
+            case 'discard_batch':
+                return `Discarded a batch for ${item.medicationName}`;
+            case 'archive':
+                return `Archived ${item.medicationName}`;
+            case 'restore':
+                return `Restored ${item.medicationName}`;
+            case 'delete_permanently':
+                return `Permanently deleted ${item.medicationName}`;
+            case 'revert':
+                return `Reverted ${item.metadata?.revertedActionType || 'a change'} for ${item.medicationName}`;
             default:
-                content = <span>{JSON.stringify(data)}</span>;
+                return item.actionType;
         }
-
-        return (
-            <div>
-                {content}
-                {data.note && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>Note: {data.note}</div>}
-            </div>
-        );
     };
 
-    // Pagination Logic
-    const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
-    // history is now already the current page items
+    const formatDate = (isoString) => new Date(isoString).toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
 
-    const groupHistoryByDate = (items) => {
-        const groups = {};
-        items.forEach(item => {
-            const date = new Date(item.timestamp).toLocaleDateString(undefined, {
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-            });
-            if (!groups[date]) groups[date] = [];
-            groups[date].push(item);
+    const groupHistoryByDate = (items) => items.reduce((groups, item) => {
+        const date = new Date(item.timestamp).toLocaleDateString(undefined, {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
         });
+        if (!groups[date]) groups[date] = [];
+        groups[date].push(item);
         return groups;
-    };
+    }, {});
 
     const groupedHistory = groupHistoryByDate(history);
+    const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
 
-    if (loading) return <div className="p-4 text-center text-secondary">Loading history...</div>;
+    if (loading) {
+        return <div className="p-4 text-center text-secondary">Loading history...</div>;
+    }
 
     return (
-        <div className="history-view" style={{ padding: '0 20px 40px', maxWidth: '800px', margin: '0 auto' }}>
+        <div className="history-view" style={{ padding: '0 20px 40px', maxWidth: '900px', margin: '0 auto' }}>
             <header className="mb-6 flex items-center gap-3 pt-6">
                 <div style={{
-                    width: '40px', height: '40px',
+                    width: '40px',
+                    height: '40px',
                     borderRadius: '12px',
                     background: 'var(--bg-card)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     border: '1px solid var(--glass-border)'
                 }}>
                     <History size={20} color="var(--primary)" />
                 </div>
                 <div>
                     <h1 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Activity History</h1>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Recent inventory changes</p>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                        Journaled inventory changes with reversible snapshots.
+                    </p>
                 </div>
             </header>
 
-            {/* Edit Modal (Simple Inline) */}
             {editingItem && (
                 <div className="modal-overlay" onClick={() => setEditingItem(null)}>
-                    <div className="modal-container" onClick={e => e.stopPropagation()}>
+                    <div className="modal-container" onClick={(event) => event.stopPropagation()}>
                         <div className="modal-header">
-                            <h3 className="modal-title">Edit Entry</h3>
+                            <h3 className="modal-title">Edit Note</h3>
                             <button className="modal-close-btn" onClick={() => setEditingItem(null)}><X size={20} /></button>
                         </div>
                         <div className="modal-body">
-                            <div className="form-group">
-                                <label className="form-label">Time</label>
-                                <input
-                                    type="datetime-local"
-                                    className="form-input"
-                                    value={new Date(editData.timestamp).toISOString().slice(0, 16)}
-                                    onChange={e => setEditData({ ...editData, timestamp: new Date(e.target.value).toISOString() })}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label className="form-label">Note</label>
-                                <input
-                                    type="text"
-                                    className="form-input"
-                                    value={editData.note}
-                                    onChange={e => setEditData({ ...editData, note: e.target.value })}
-                                    placeholder="Add a note..."
-                                />
-                            </div>
-                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
-                                Editing other details may cause inconsistencies in inventory.
-                            </div>
+                            <label className="form-label">Note</label>
+                            <textarea
+                                className="form-input"
+                                rows={3}
+                                value={note}
+                                onChange={(event) => setNote(event.target.value)}
+                                placeholder="Add context for this event..."
+                            />
+                            <p style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                Notes are editable. Inventory snapshots and timestamps are not.
+                            </p>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn secondary" style={{ margin: 0, width: 'auto' }} onClick={() => setEditingItem(null)}>Cancel</button>
-                            <button className="btn primary" style={{ width: 'auto' }} onClick={handleEditSave}>Save Changes</button>
+                            <button className="btn secondary" style={{ width: 'auto' }} onClick={() => setEditingItem(null)}>Cancel</button>
+                            <button className="btn primary" style={{ width: 'auto' }} onClick={handleEditSave}>Save Note</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {detailItem && (
+                <div className="modal-overlay" onClick={() => setDetailItem(null)}>
+                    <div className="modal-container" style={{ maxWidth: '720px' }} onClick={(event) => event.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3 className="modal-title">Snapshot Details</h3>
+                            <button className="modal-close-btn" onClick={() => setDetailItem(null)}><X size={20} /></button>
+                        </div>
+                        <div className="modal-body history-detail-body">
+                            <p><strong>{describeEntry(detailItem)}</strong></p>
+                            {detailItem.batchDeltas?.length > 0 && (
+                                <div>
+                                    <h4 className="section-caption">Batch Deltas</h4>
+                                    <ul className="history-delta-list">
+                                        {detailItem.batchDeltas.map((delta) => (
+                                            <li key={delta.batchId}>
+                                                Batch {delta.batchId.slice(0, 8)}: {delta.beforeQuantity} → {delta.afterQuantity}
+                                                {delta.location ? ` • ${delta.location}` : ''}
+                                                {delta.expiryDate ? ` • exp ${delta.expiryDate}` : ''}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
+                            <div className="history-snapshot-grid">
+                                <div>
+                                    <h4 className="section-caption">Before</h4>
+                                    <pre>{JSON.stringify(detailItem.beforeSnapshot, null, 2)}</pre>
+                                </div>
+                                <div>
+                                    <h4 className="section-caption">After</h4>
+                                    <pre>{JSON.stringify(detailItem.afterSnapshot, null, 2)}</pre>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -216,78 +252,50 @@ const HistoryView = () => {
                 </div>
             ) : (
                 <div className="history-list">
-                    {Object.keys(groupedHistory).map(date => (
+                    {Object.keys(groupedHistory).map((date) => (
                         <div key={date} className="history-group mb-8">
-                            <h3 style={{
-                                fontSize: '0.8rem',
-                                textTransform: 'uppercase',
-                                color: 'var(--text-secondary)',
-                                marginBottom: '16px',
-                                letterSpacing: '1px',
-                                paddingLeft: '8px',
-                                fontWeight: 600
-                            }}>
-                                {date}
-                            </h3>
+                            <h3 className="history-group-label">{date}</h3>
                             <div className="group-items flex flex-col gap-2">
-                                {groupedHistory[date].map((item, index) => (
-                                    <div key={item.id || index} className="history-item" style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        padding: '12px 16px',
-                                        background: 'transparent',
-                                        borderBottom: '1px solid var(--glass-border)',
-                                        gap: '16px',
-                                        transition: 'background 0.2s'
-                                    }}>
-                                        <div className="item-icon" style={{
-                                            flexShrink: 0,
-                                            width: '32px',
-                                            height: '32px',
-                                            borderRadius: '50%',
-                                            background: 'var(--bg-card)',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            border: '1px solid var(--glass-border)'
-                                        }}>
-                                            {getIcon(item.actionType)}
-                                        </div>
+                                {groupedHistory[date].map((item) => (
+                                    <div key={item.id} className="history-item">
+                                        <div className="item-icon">{getIcon(item.actionType)}</div>
                                         <div className="item-content flex-1">
-                                            <div style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-secondary)' }}>
-                                                {renderDetails(item)}
+                                            <div className="history-primary-line">
+                                                <span>{describeEntry(item)}</span>
+                                                {item.revertedAt && <span className="history-status-pill">Reverted</span>}
+                                            </div>
+                                            <div className="history-secondary-line">
+                                                <span>{formatDate(item.timestamp)}</span>
+                                                {getEntryNote(item) && <span>• {getEntryNote(item)}</span>}
                                             </div>
                                         </div>
-                                        <div className="actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            {/* Edit Button */}
+                                        <div className="actions history-action-row">
                                             <button
+                                                type="button"
+                                                onClick={() => setDetailItem(item)}
+                                                className="history-icon-button"
+                                                title="View details"
+                                            >
+                                                <Eye size={14} />
+                                            </button>
+                                            <button
+                                                type="button"
                                                 onClick={() => handleEditStart(item)}
-                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: 4 }}
-                                                title="Edit Entry"
+                                                className="history-icon-button"
+                                                title="Edit note"
                                             >
                                                 <Edit size={14} />
                                             </button>
-
-                                            {/* Revert Button - Only conditionally */}
                                             {isRevertible(item) && (
                                                 <button
+                                                    type="button"
                                                     onClick={() => handleRevert(item)}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--warning)', padding: 4 }}
-                                                    title="Revert Action"
+                                                    className="history-icon-button warning"
+                                                    title="Revert change"
                                                 >
                                                     <RotateCcw size={14} />
                                                 </button>
                                             )}
-                                        </div>
-                                        <div className="item-time" style={{
-                                            fontSize: '0.8rem',
-                                            color: 'var(--text-secondary)',
-                                            whiteSpace: 'nowrap',
-                                            opacity: 0.7,
-                                            width: '60px',
-                                            textAlign: 'right'
-                                        }}>
-                                            {formatDate(item.timestamp)}
                                         </div>
                                     </div>
                                 ))}
@@ -297,61 +305,28 @@ const HistoryView = () => {
                 </div>
             )}
 
+            {totalPages > 1 && (
+                <div className="pagination-controls">
+                    <button
+                        onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                        disabled={currentPage === 1}
+                    >
+                        <ChevronLeft size={16} /> Previous
+                    </button>
 
+                    <span>
+                        Page <strong>{currentPage}</strong> of {totalPages}
+                    </span>
 
-            {/* Pagination Controls */}
-            {
-                totalPages > 1 && (
-                    <div className="pagination-controls" style={{
-                        display: 'flex',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        gap: '20px',
-                        marginTop: '40px',
-                        paddingTop: '20px',
-                        borderTop: '1px solid var(--glass-border)'
-                    }}>
-                        <button
-                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                            disabled={currentPage === 1}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '8px',
-                                background: 'var(--bg-card)',
-                                border: '1px solid var(--glass-border)',
-                                color: currentPage === 1 ? 'var(--text-secondary)' : 'var(--text-primary)',
-                                padding: '8px 16px',
-                                borderRadius: '8px',
-                                opacity: currentPage === 1 ? 0.5 : 1,
-                                cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
-                            }}
-                        >
-                            <ChevronLeft size={16} /> Previous
-                        </button>
-
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                            Page <strong style={{ color: 'var(--text-primary)' }}>{currentPage}</strong> of {totalPages}
-                        </span>
-
-                        <button
-                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                            disabled={currentPage === totalPages}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '8px',
-                                background: 'var(--bg-card)',
-                                border: '1px solid var(--glass-border)',
-                                color: currentPage === totalPages ? 'var(--text-secondary)' : 'var(--text-primary)',
-                                padding: '8px 16px',
-                                borderRadius: '8px',
-                                opacity: currentPage === totalPages ? 0.5 : 1,
-                                cursor: currentPage === totalPages ? 'not-allowed' : 'pointer'
-                            }}
-                        >
-                            Next <ChevronRight size={16} />
-                        </button>
-                    </div>
-                )
-            }
-        </div >
+                    <button
+                        onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                        disabled={currentPage === totalPages}
+                    >
+                        Next <ChevronRight size={16} />
+                    </button>
+                </div>
+            )}
+        </div>
     );
 };
 
