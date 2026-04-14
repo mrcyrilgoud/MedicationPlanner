@@ -55,12 +55,22 @@ export const storage = {
         return 0;
     },
 
+    async getAllHistory() {
+        if (adapter.getAllHistory) return adapter.getAllHistory();
+        return [];
+    },
+
     async deleteHistoryEntry(id) {
         if (adapter.deleteHistoryEntry) return adapter.deleteHistoryEntry(id);
     },
 
     async updateHistoryEntry(id, data) {
         if (adapter.updateHistoryEntry) return adapter.updateHistoryEntry(id, data);
+    },
+
+    async applyMutation(mutation) {
+        if (adapter.applyMutation) return adapter.applyMutation(mutation);
+        throw new Error('Atomic mutations are not supported by the active adapter');
     },
 
     // Migration / Debug

@@ -1,9 +1,27 @@
-import React, { Suspense, lazy, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { InventoryProvider } from './context/InventoryContext';
 import { ToastProvider } from './context/ToastContext';
 import Dashboard from './components/Dashboard';
 import ModeSwitcher from './components/ModeSwitcher';
-import { LayoutGrid, List, PlusCircle, Settings, History, ScrollText } from 'lucide-react';
+import {
+  LayoutGrid,
+  List,
+  PlusCircle,
+  Settings,
+  History,
+  ScrollText,
+  Menu,
+  X
+} from 'lucide-react';
+import { buildRoute, getCurrentRoute } from './utils/routeState';
+import {
+  PREFERENCES_UPDATED_EVENT,
+  getDeviceModeOverride,
+  getStoredPreferences,
+  getStoredTheme,
+  setDeviceModeOverride,
+  setStoredTheme
+} from './utils/preferences';
 import './App.css';
 
 const MedicationList = lazy(() => import('./components/MedicationList'));
@@ -18,143 +36,163 @@ const ViewLoadingState = () => (
   </div>
 );
 
+const getResponsiveMode = (width) => {
+  if (width >= 1000) return 'computer';
+  if (width >= 600) return 'tablet';
+  return 'phone';
+};
+
 function App() {
-  // Default to phone, but try to detect on mount
-  const [deviceMode, setDeviceMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      if (window.innerWidth >= 1000) return 'computer';
-      if (window.innerWidth >= 600) return 'tablet';
-    }
-    return 'phone';
+  const [autoDeviceMode, setAutoDeviceMode] = useState(() => {
+    if (typeof window === 'undefined') return 'phone';
+    return getResponsiveMode(window.innerWidth);
   });
+  const [deviceModeOverride, setDeviceModeOverrideState] = useState(() => getDeviceModeOverride());
+  const [theme, setTheme] = useState(() => getStoredTheme());
+  const [route, setRoute] = useState(() => getCurrentRoute());
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
 
-  const [theme, setTheme] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('app_theme') || 'dark';
-    }
-    return 'dark';
-  });
+  const deviceMode = deviceModeOverride === 'auto' ? autoDeviceMode : deviceModeOverride;
+  const currentView = route.view;
+  const viewParams = route.params;
 
-  // Apply Theme Effect
-  React.useEffect(() => {
+  useEffect(() => {
     document.body.setAttribute('data-theme', theme);
-    localStorage.setItem('app_theme', theme);
+    setStoredTheme(theme);
   }, [theme]);
 
-  // Handle Window Resize
-  React.useEffect(() => {
-    const handleResize = () => {
-      const width = window.innerWidth;
-      let newMode = 'phone';
-      if (width >= 1000) newMode = 'computer';
-      else if (width >= 600) newMode = 'tablet';
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
 
-      setDeviceMode(prev => {
-        if (prev !== newMode) return newMode;
-        return prev;
-      });
+    const handleResize = () => {
+      setAutoDeviceMode(getResponsiveMode(window.innerWidth));
     };
 
-    window.addEventListener('resize', handleResize);
-    // Call once to ensure correct state on mount (in case hydration differed)
     handleResize();
+    window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const [currentView, setCurrentView] = useState('dashboard');
-  const [viewParams, setViewParams] = useState({});
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const syncRoute = () => {
+      if (!window.location.hash) {
+        window.location.replace(buildRoute('dashboard'));
+        return;
+      }
+      setRoute(getCurrentRoute());
+      setIsMoreMenuOpen(false);
+    };
+
+    syncRoute();
+    window.addEventListener('hashchange', syncRoute);
+    return () => window.removeEventListener('hashchange', syncRoute);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const syncPreferences = (event) => {
+      const prefs = event?.detail || getStoredPreferences();
+      if (prefs.theme) setTheme(prefs.theme);
+      if (prefs.deviceModeOverride) setDeviceModeOverrideState(prefs.deviceModeOverride);
+    };
+
+    window.addEventListener(PREFERENCES_UPDATED_EVENT, syncPreferences);
+    return () => window.removeEventListener(PREFERENCES_UPDATED_EVENT, syncPreferences);
+  }, []);
 
   const handleNavigate = (view, params = {}) => {
-    setCurrentView(view);
-    setViewParams(params);
+    if (typeof window === 'undefined') return;
+    window.location.hash = buildRoute(view, params);
+  };
+
+  const handleDeviceModePreferenceChange = (value) => {
+    setDeviceModeOverrideState(value);
+    setDeviceModeOverride(value);
   };
 
   const renderView = () => {
     switch (currentView) {
-      case 'dashboard': return <Dashboard onNavigate={handleNavigate} />;
-      case 'inventory': return (
-        <Suspense fallback={<ViewLoadingState />}>
-          <div style={{ paddingTop: '1rem' }}>
-            <h2 style={{ marginBottom: '1rem' }}>
-              {viewParams.filter ? (
-                viewParams.filter === 'low' ? 'Low Stock Items' :
-                  viewParams.filter === 'expiring' ? 'Expiring Items' :
-                    viewParams.filter === 'projected' ? 'Empty Soon Items' :
-                      'Filtered Items'
-              ) : 'My Inventory'}
-              {viewParams.filter && (
-                <button
-                  onClick={() => setViewParams({})}
-                  style={{
-                    marginLeft: '1rem',
-                    fontSize: '0.8rem',
-                    padding: '4px 8px',
-                    background: 'rgba(255,255,255,0.1)',
-                    border: 'none',
-                    borderRadius: '4px',
-                    color: 'var(--text-secondary)',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Clear Filter
-                </button>
-              )}
-            </h2>
-            <MedicationList filter={viewParams.filter} />
-          </div>
-        </Suspense>
-      );
-      case 'add': return (
-        <Suspense fallback={<ViewLoadingState />}>
-          <div style={{ paddingTop: '1rem' }}>
-            <h2 style={{ marginBottom: '1rem' }}>Manage Stock</h2>
-            <AddRestockForm onComplete={() => handleNavigate('inventory')} />
-          </div>
-        </Suspense>
-      );
-      case 'history': return (
-        <Suspense fallback={<ViewLoadingState />}>
-          <HistoryView />
-        </Suspense>
-      );
-      case 'shopping-list': return (
-        <Suspense fallback={<ViewLoadingState />}>
-          <div style={{ paddingTop: '1rem' }}>
-            <PrescriptionGenerator />
-          </div>
-        </Suspense>
-      );
-      case 'settings': return (
-        <Suspense fallback={<ViewLoadingState />}>
-          <DataManagement
-            currentMode={deviceMode}
-            onModeChange={setDeviceMode}
-            currentTheme={theme}
-            onThemeChange={setTheme}
-          />
-        </Suspense>
-      );
-      default: return <Dashboard onNavigate={handleNavigate} />;
+      case 'dashboard':
+        return <Dashboard onNavigate={handleNavigate} />;
+      case 'inventory':
+        return (
+          <Suspense fallback={<ViewLoadingState />}>
+            <MedicationList
+              key={`inventory:${viewParams.filter || 'all'}:${viewParams.condition || ''}:${viewParams.tag || ''}:${viewParams.location || ''}`}
+              initialFilter={viewParams.filter || 'all'}
+              initialCondition={viewParams.condition || ''}
+              initialTag={viewParams.tag || ''}
+              initialLocation={viewParams.location || ''}
+              onNavigate={handleNavigate}
+            />
+          </Suspense>
+        );
+      case 'add':
+        return (
+          <Suspense fallback={<ViewLoadingState />}>
+            <AddRestockForm
+              key={`add:${viewParams.mode || 'default'}:${viewParams.medicationId || ''}`}
+              initialMode={viewParams.mode || null}
+              initialMedicationId={viewParams.medicationId || null}
+              onComplete={({ nextView = 'inventory', params = {} } = {}) => handleNavigate(nextView, params)}
+              onNavigate={handleNavigate}
+            />
+          </Suspense>
+        );
+      case 'history':
+        return (
+          <Suspense fallback={<ViewLoadingState />}>
+            <HistoryView />
+          </Suspense>
+        );
+      case 'shopping-list':
+        return (
+          <Suspense fallback={<ViewLoadingState />}>
+            <PrescriptionGenerator
+              key={`shopping:${viewParams.medicationId || ''}`}
+              initialMedicationId={viewParams.medicationId || null}
+              onNavigate={handleNavigate}
+            />
+          </Suspense>
+        );
+      case 'settings':
+        return (
+          <Suspense fallback={<ViewLoadingState />}>
+            <DataManagement
+              currentMode={deviceMode}
+              deviceModeOverride={deviceModeOverride}
+              onDeviceModePreferenceChange={handleDeviceModePreferenceChange}
+              currentTheme={theme}
+              onThemeChange={setTheme}
+            />
+          </Suspense>
+        );
+      default:
+        return <Dashboard onNavigate={handleNavigate} />;
     }
   };
+
+  const isOverflowView = ['history', 'shopping-list', 'settings'].includes(currentView);
 
   return (
     <ToastProvider>
       <InventoryProvider>
-        {/* Mode Switcher Floating */}
-        <div className="no-print" style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 1000 }}>
-          <ModeSwitcher
-            currentMode={deviceMode}
-            onModeChange={setDeviceMode}
-            currentTheme={theme}
-            onThemeChange={setTheme}
-            onOpenSettings={() => handleNavigate('settings')}
-          />
-        </div>
+        {deviceMode === 'computer' && (
+          <div className="no-print" style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 1000 }}>
+            <ModeSwitcher
+              currentMode={deviceMode}
+              onModeChange={handleDeviceModePreferenceChange}
+              currentTheme={theme}
+              onThemeChange={setTheme}
+              onOpenSettings={() => handleNavigate('settings')}
+            />
+          </div>
+        )}
 
         <div className={`app-container mode-${deviceMode}`}>
-
-          {/* Sidebar for Computer Mode */}
           {deviceMode === 'computer' && (
             <aside className="sidebar no-print">
               <div className="sidebar-header">
@@ -163,35 +201,35 @@ function App() {
               <nav className="sidebar-nav">
                 <button
                   className={`nav-item-side ${currentView === 'dashboard' ? 'active' : ''}`}
-                  onClick={() => setCurrentView('dashboard')}
+                  onClick={() => handleNavigate('dashboard')}
                 >
                   <LayoutGrid size={20} />
                   <span>Dashboard</span>
                 </button>
                 <button
                   className={`nav-item-side ${currentView === 'inventory' ? 'active' : ''}`}
-                  onClick={() => setCurrentView('inventory')}
+                  onClick={() => handleNavigate('inventory')}
                 >
                   <List size={20} />
                   <span>Inventory</span>
                 </button>
                 <button
                   className={`nav-item-side ${currentView === 'add' ? 'active' : ''}`}
-                  onClick={() => setCurrentView('add')}
+                  onClick={() => handleNavigate('add')}
                 >
                   <PlusCircle size={20} />
                   <span>Add</span>
                 </button>
                 <button
                   className={`nav-item-side ${currentView === 'shopping-list' ? 'active' : ''}`}
-                  onClick={() => setCurrentView('shopping-list')}
+                  onClick={() => handleNavigate('shopping-list')}
                 >
                   <ScrollText size={20} />
                   <span>Shop List</span>
                 </button>
                 <button
                   className={`nav-item-side ${currentView === 'history' ? 'active' : ''}`}
-                  onClick={() => setCurrentView('history')}
+                  onClick={() => handleNavigate('history')}
                 >
                   <History size={20} />
                   <span>History</span>
@@ -199,7 +237,7 @@ function App() {
                 <div style={{ flex: 1 }}></div>
                 <button
                   className={`nav-item-side ${currentView === 'settings' ? 'active' : ''}`}
-                  onClick={() => setCurrentView('settings')}
+                  onClick={() => handleNavigate('settings')}
                 >
                   <Settings size={20} />
                   <span>Settings</span>
@@ -212,52 +250,58 @@ function App() {
             {renderView()}
           </main>
 
-          {/* Bottom Nav for Phone/Tablet */}
           {deviceMode !== 'computer' && (
-            <nav className="bottom-nav no-print">
-              <button
-                className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}
-                onClick={() => setCurrentView('dashboard')}
-              >
-                <LayoutGrid size={24} />
-                <span>Dashboard</span>
-              </button>
-              <button
-                className={`nav-item ${currentView === 'inventory' ? 'active' : ''}`}
-                onClick={() => setCurrentView('inventory')}
-              >
-                <List size={24} />
-                <span>Inventory</span>
-              </button>
-              <button
-                className={`nav-item ${currentView === 'add' ? 'active' : ''}`}
-                onClick={() => setCurrentView('add')}
-              >
-                <PlusCircle size={24} />
-                <span>Add</span>
-              </button>
-              <button
-                className={`nav-item ${currentView === 'shopping-list' ? 'active' : ''}`}
-                onClick={() => setCurrentView('shopping-list')}
-              >
-                <ScrollText size={24} />
-                <span>Shop</span>
-              </button>
-              <button
-                className={`nav-item ${currentView === 'history' ? 'active' : ''}`}
-                onClick={() => setCurrentView('history')}
-              >
-                <History size={24} />
-                <span>History</span>
-              </button>
-              <button
-                className={`nav-item ${currentView === 'settings' ? 'active' : ''}`}
-                onClick={() => setCurrentView('settings')}
-              >
-                <Settings size={24} />
-                <span>Settings</span>
-              </button>
-            </nav>
+            <>
+              <nav className="bottom-nav no-print">
+                <button
+                  className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}
+                  onClick={() => handleNavigate('dashboard')}
+                >
+                  <LayoutGrid size={24} />
+                  <span>Home</span>
+                </button>
+                <button
+                  className={`nav-item ${currentView === 'inventory' ? 'active' : ''}`}
+                  onClick={() => handleNavigate('inventory')}
+                >
+                  <List size={24} />
+                  <span>Inventory</span>
+                </button>
+                <button
+                  className={`nav-item ${currentView === 'add' ? 'active' : ''}`}
+                  onClick={() => handleNavigate('add')}
+                >
+                  <PlusCircle size={24} />
+                  <span>Add</span>
+                </button>
+                <button
+                  className={`nav-item ${isOverflowView || isMoreMenuOpen ? 'active' : ''}`}
+                  onClick={() => setIsMoreMenuOpen((open) => !open)}
+                >
+                  {isMoreMenuOpen ? <X size={24} /> : <Menu size={24} />}
+                  <span>More</span>
+                </button>
+              </nav>
+
+              {isMoreMenuOpen && (
+                <div className="mobile-more-overlay no-print" onClick={() => setIsMoreMenuOpen(false)}>
+                  <div className="mobile-more-sheet" onClick={(event) => event.stopPropagation()}>
+                    <button className="mobile-more-item" onClick={() => handleNavigate('shopping-list')}>
+                      <ScrollText size={20} />
+                      <span>Shopping List</span>
+                    </button>
+                    <button className="mobile-more-item" onClick={() => handleNavigate('history')}>
+                      <History size={20} />
+                      <span>History</span>
+                    </button>
+                    <button className="mobile-more-item" onClick={() => handleNavigate('settings')}>
+                      <Settings size={20} />
+                      <span>Settings</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </InventoryProvider>

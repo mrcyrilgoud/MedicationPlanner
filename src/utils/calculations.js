@@ -8,13 +8,8 @@
  * @returns {object|null} - Object containing runout dates or null if invalid inputs
  */
 export const calculateRunoutDate = (totalQuantity, usageRate, usageFrequency, lowThreshold = 0) => {
-    if (!usageRate || Number(usageRate) <= 0) return null;
-
-    let dailyRate = Number(usageRate);
-    if (usageFrequency === 'weekly') dailyRate = dailyRate / 7;
-    if (usageFrequency === 'monthly') dailyRate = dailyRate / 30; // Approx
-
-    if (dailyRate === 0) return null;
+    const dailyRate = getDailyUsageQuantity(usageRate, usageFrequency);
+    if (!dailyRate || Number(dailyRate) <= 0) return null;
 
     // Date Empty
     const daysUntilEmpty = totalQuantity / dailyRate;
@@ -36,4 +31,26 @@ export const calculateRunoutDate = (totalQuantity, usageRate, usageFrequency, lo
         dateLow,
         daysUntilLow
     };
+};
+
+export const getDailyUsageQuantity = (usageRate, usageFrequency) => {
+    if (!usageRate || Number(usageRate) <= 0) return null;
+
+    let dailyRate = Number(usageRate);
+    if (usageFrequency === 'weekly') dailyRate /= 7;
+    if (usageFrequency === 'monthly') dailyRate /= 30;
+
+    return dailyRate > 0 ? dailyRate : null;
+};
+
+export const getDailyUsageQuantityForMedication = (medication) => (
+    getDailyUsageQuantity(medication?.usageRate, medication?.usageFrequency)
+);
+
+export const getLowStockThresholdQuantity = (medication) => {
+    const threshold = Number(medication?.lowStockThreshold || 0);
+    if (medication?.defaultUnit === 'inhaler') {
+        return threshold * (Number(medication?.puffsPerCanister) || 200);
+    }
+    return threshold;
 };

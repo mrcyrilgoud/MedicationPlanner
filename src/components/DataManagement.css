@@ -67,3 +67,81 @@
     align-items: center;
     gap: 8px;
 }
+
+.dm-preview-card,
+.dm-empty-state {
+    margin-top: 1rem;
+    padding: 1rem;
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.import-mode-card {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.9rem 1rem;
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.dm-preview-grid,
+.dm-health-grid {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.dm-health-card {
+    padding: 1rem;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.dm-health-card strong {
+    font-size: 1.5rem;
+}
+
+.dm-issue-list {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    color: var(--text-secondary);
+}
+
+.dm-card-header-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+.dm-archive-item strong {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.dm-archive-item span {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.dm-archive-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+@media (min-width: 768px) {
+    .dm-preview-grid,
+    .dm-health-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

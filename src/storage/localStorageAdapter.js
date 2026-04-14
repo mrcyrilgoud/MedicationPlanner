@@ -1,11 +1,22 @@
 const STORAGE_KEY = 'med_inventory_v1';
 
+const readState = () => {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (!data) {
+        return { meds: [], batches: [], history: [] };
+    }
+
+    const parsed = JSON.parse(data);
+    return {
+        meds: parsed.meds || [],
+        batches: parsed.batches || [],
+        history: parsed.history || []
+    };
+};
+
 export const localStorageAdapter = {
     async getMedications() {
-        const data = localStorage.getItem(STORAGE_KEY);
-        if (!data) return [];
-        const parsed = JSON.parse(data);
-        return parsed.meds || [];
+        return readState().meds;
     },
 
     async saveMedication(med) {
@@ -22,8 +33,8 @@ export const localStorageAdapter = {
             all.push(med);
         }
 
-        const batches = await this.getBatches();
-        this._persist(all, batches);
+        const state = readState();
+        this._persist(all, state.batches, state.history);
     },
 
     async deleteMedication(id) {
@@ -33,13 +44,12 @@ export const localStorageAdapter = {
         let batches = await this.getBatches();
         batches = batches.filter(b => b.medicationId !== id);
 
-        this._persist(all, batches);
+        const state = readState();
+        this._persist(all, batches, state.history);
     },
 
     async getBatches() {
-        const data = localStorage.getItem(STORAGE_KEY);
-        if (!data) return [];
-        return JSON.parse(data).batches || [];
+        return readState().batches;
     },
 
     async saveBatch(batch) {
@@ -48,8 +58,8 @@ export const localStorageAdapter = {
         if (index >= 0) batches[index] = batch;
         else batches.push(batch);
 
-        const meds = await this.getMedications();
-        this._persist(meds, batches);
+        const state = readState();
+        this._persist(state.meds, batches, state.history);
     },
 
     async saveBatches(newBatches) {
@@ -66,22 +76,117 @@ export const localStorageAdapter = {
             if (idx >= 0) current[idx] = b;
             else current.push(b);
         }
-        const meds = await this.getMedications();
-        this._persist(meds, current);
+        const state = readState();
+        this._persist(state.meds, current, state.history);
     },
 
     async deleteBatch(id) {
         let batches = await this.getBatches();
         batches = batches.filter(b => b.id !== id);
-        const meds = await this.getMedications();
-        this._persist(meds, batches);
+        const state = readState();
+        this._persist(state.meds, batches, state.history);
     },
 
     async clearAll() {
         localStorage.removeItem(STORAGE_KEY);
     },
 
-    _persist(meds, batches) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ meds, batches }));
+    async addHistoryEntry(entry) {
+        const state = readState();
+        state.history.push(entry);
+        this._persist(state.meds, state.batches, state.history);
+    },
+
+    async getHistory({ limit = 50, offset = 0 } = {}) {
+        const state = readState();
+        return [...state.history]
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+            .slice(offset, offset + limit);
+    },
+
+    async getHistoryCount() {
+        return readState().history.length;
+    },
+
+    async getAllHistory() {
+        return readState().history;
+    },
+
+    async deleteHistoryEntry(id) {
+        const state = readState();
+        state.history = state.history.filter((entry) => entry.id !== id);
+        this._persist(state.meds, state.batches, state.history);
+    },
+
+    async updateHistoryEntry(id, updates) {
+        const state = readState();
+        state.history = state.history.map((entry) => {
+            if (entry.id !== id) return entry;
+            const updated = { ...entry, ...updates };
+            if (updates.data) {
+                updated.data = { ...entry.data, ...updates.data };
+            }
+            return updated;
+        });
+        this._persist(state.meds, state.batches, state.history);
+    },
+
+    async applyMutation(mutation) {
+        if (mutation.replaceAll) {
+            const {
+                medications = [],
+                batches = [],
+                history = []
+            } = mutation.replaceAll;
+            this._persist(medications, batches, history);
+            return;
+        }
+
+        const state = readState();
+
+        for (const medication of mutation.medicationsToPut || []) {
+            const index = state.meds.findIndex((item) => item.id === medication.id);
+            if (index >= 0) {
+                state.meds[index] = medication;
+            } else {
+                state.meds.push(medication);
+            }
+        }
+
+        if (mutation.medicationIdsToDelete?.length) {
+            state.meds = state.meds.filter((item) => !mutation.medicationIdsToDelete.includes(item.id));
+        }
+
+        for (const batch of mutation.batchesToPut || []) {
+            const index = state.batches.findIndex((item) => item.id === batch.id);
+            if (index >= 0) {
+                state.batches[index] = batch;
+            } else {
+                state.batches.push(batch);
+            }
+        }
+
+        if (mutation.batchIdsToDelete?.length) {
+            state.batches = state.batches.filter((item) => !mutation.batchIdsToDelete.includes(item.id));
+        }
+
+        for (const entry of mutation.historyToPut || []) {
+            const index = state.history.findIndex((item) => item.id === entry.id);
+            if (index >= 0) {
+                state.history[index] = entry;
+            } else {
+                state.history.push(entry);
+            }
+        }
+
+        if (mutation.historyIdsToDelete?.length) {
+            state.history = state.history.filter((item) => !mutation.historyIdsToDelete.includes(item.id));
+        }
+
+        this._persist(state.meds, state.batches, state.history);
+    },
+
+    _persist(meds, batches, history = []) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ meds, batches, history }));
     }
 };
