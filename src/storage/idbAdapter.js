@@ -1,7 +1,9 @@
 import { openDB } from 'idb';
+import { normalizeStorageError } from './storageErrors';
 
 const DB_NAME = 'MedInventoryDB';
 const DB_VERSION = 4;
+const MUTATION_STORES = ['medications', 'batches', 'history', 'images'];
 
 const dbPromise = openDB(DB_NAME, DB_VERSION, {
     upgrade(db) {
@@ -18,7 +20,7 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
             batchStore.createIndex('expiryDate', 'expiryDate', { unique: false });
         }
 
-        // Store for images
+        // Legacy store kept for schema compatibility; photos are stored inline on medications.
         if (!db.objectStoreNames.contains('images')) {
             db.createObjectStore('images', { keyPath: 'id' });
         }
@@ -31,6 +33,14 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     },
 });
 
+const runMutation = async (callback) => {
+    try {
+        return await callback();
+    } catch (error) {
+        throw normalizeStorageError(error);
+    }
+};
+
 export const idbAdapter = {
     // --- Medications ---
     async getMedications() {
@@ -38,23 +48,27 @@ export const idbAdapter = {
     },
 
     async saveMedication(med) {
-        const db = await dbPromise;
-        // Store inline for compatibility and simplicity.
-        await db.put('medications', med);
+        return runMutation(async () => {
+            const db = await dbPromise;
+            await db.put('medications', med);
+        });
     },
 
     async deleteMedication(id) {
-        const db = await dbPromise;
-        await db.delete('medications', id);
-        // clean up batches
-        const tx = db.transaction('batches', 'readwrite');
-        const index = tx.store.index('medicationId');
-        let cursor = await index.openCursor(IDBKeyRange.only(id));
-        while (cursor) {
-            await cursor.delete();
-            cursor = await cursor.continue();
-        }
-        await tx.done;
+        return runMutation(async () => {
+            const db = await dbPromise;
+            const tx = db.transaction(['medications', 'batches'], 'readwrite');
+            await tx.objectStore('medications').delete(id);
+
+            const index = tx.objectStore('batches').index('medicationId');
+            let cursor = await index.openCursor(IDBKeyRange.only(id));
+            while (cursor) {
+                await cursor.delete();
+                cursor = await cursor.continue();
+            }
+
+            await tx.done;
+        });
     },
 
     async getHistoryCount() {
@@ -71,32 +85,36 @@ export const idbAdapter = {
     },
 
     async saveBatch(batch) {
-        return (await dbPromise).put('batches', batch);
+        return runMutation(async () => {
+            await (await dbPromise).put('batches', batch);
+        });
     },
 
     async saveBatches(batches) {
-        const tx = (await dbPromise).transaction('batches', 'readwrite');
-        await Promise.all(batches.map(b => tx.store.put(b)));
-        await tx.done;
+        return runMutation(async () => {
+            const tx = (await dbPromise).transaction('batches', 'readwrite');
+            await Promise.all(batches.map((batch) => tx.store.put(batch)));
+            await tx.done;
+        });
     },
 
     async deleteBatch(id) {
-        return (await dbPromise).delete('batches', id);
+        return runMutation(async () => {
+            await (await dbPromise).delete('batches', id);
+        });
     },
 
     // --- History ---
     async addHistoryEntry(entry) {
-        return (await dbPromise).put('history', entry);
+        return runMutation(async () => {
+            await (await dbPromise).put('history', entry);
+        });
     },
 
     async getHistory({ limit = 50, offset = 0 } = {}) {
         const db = await dbPromise;
         const tx = db.transaction('history', 'readonly');
         const index = tx.store.index('timestamp');
-
-        // We want newest first, so we iterate backwards (prev).
-        // Since we want pagination, we can advance the cursor by 'offset'
-        // and then take 'limit' items.
 
         const entries = [];
         let cursor = await index.openCursor(null, 'prev');
@@ -114,71 +132,77 @@ export const idbAdapter = {
     },
 
     async deleteHistoryEntry(id) {
-        return (await dbPromise).delete('history', id);
+        return runMutation(async () => {
+            await (await dbPromise).delete('history', id);
+        });
     },
 
     async updateHistoryEntry(id, updates) {
-        const db = await dbPromise;
-        const tx = db.transaction('history', 'readwrite');
-        const entry = await tx.store.get(id);
-        if (entry) {
-            // Merging generic data and 'data' object
-            const updated = { ...entry, ...updates };
-            // Deep merge 'data' if present in updates
-            if (updates.data) {
-                updated.data = { ...entry.data, ...updates.data };
+        return runMutation(async () => {
+            const db = await dbPromise;
+            const tx = db.transaction('history', 'readwrite');
+            const entry = await tx.store.get(id);
+            if (entry) {
+                const updated = { ...entry, ...updates };
+                if (updates.data) {
+                    updated.data = { ...entry.data, ...updates.data };
+                }
+                await tx.store.put(updated);
             }
-            await tx.store.put(updated);
-        }
-        await tx.done;
+            await tx.done;
+        });
     },
 
     async applyMutation(mutation) {
-        const db = await dbPromise;
-        const tx = db.transaction(['medications', 'batches', 'history'], 'readwrite');
-        const medicationStore = tx.objectStore('medications');
-        const batchStore = tx.objectStore('batches');
-        const historyStore = tx.objectStore('history');
+        return runMutation(async () => {
+            const db = await dbPromise;
+            const tx = db.transaction(MUTATION_STORES, 'readwrite');
+            const medicationStore = tx.objectStore('medications');
+            const batchStore = tx.objectStore('batches');
+            const historyStore = tx.objectStore('history');
+            const imageStore = tx.objectStore('images');
 
-        if (mutation.replaceAll) {
-            const {
-                medications = [],
-                batches = [],
-                history = []
-            } = mutation.replaceAll;
+            if (mutation.replaceAll) {
+                const {
+                    medications = [],
+                    batches = [],
+                    history = []
+                } = mutation.replaceAll;
+
+                await Promise.all([
+                    medicationStore.clear(),
+                    batchStore.clear(),
+                    historyStore.clear(),
+                    imageStore.clear()
+                ]);
+
+                await Promise.all([
+                    ...medications.map((medication) => medicationStore.put(medication)),
+                    ...batches.map((batch) => batchStore.put(batch)),
+                    ...history.map((entry) => historyStore.put(entry))
+                ]);
+                await tx.done;
+                return;
+            }
 
             await Promise.all([
-                medicationStore.clear(),
-                batchStore.clear(),
-                historyStore.clear()
+                ...(mutation.medicationsToPut || []).map((medication) => medicationStore.put(medication)),
+                ...(mutation.medicationIdsToDelete || []).map((id) => medicationStore.delete(id)),
+                ...(mutation.batchesToPut || []).map((batch) => batchStore.put(batch)),
+                ...(mutation.batchIdsToDelete || []).map((id) => batchStore.delete(id)),
+                ...(mutation.historyToPut || []).map((entry) => historyStore.put(entry)),
+                ...(mutation.historyIdsToDelete || []).map((id) => historyStore.delete(id))
             ]);
 
-            await Promise.all([
-                ...medications.map((medication) => medicationStore.put(medication)),
-                ...batches.map((batch) => batchStore.put(batch)),
-                ...history.map((entry) => historyStore.put(entry))
-            ]);
             await tx.done;
-            return;
-        }
-
-        await Promise.all([
-            ...(mutation.medicationsToPut || []).map((medication) => medicationStore.put(medication)),
-            ...(mutation.medicationIdsToDelete || []).map((id) => medicationStore.delete(id)),
-            ...(mutation.batchesToPut || []).map((batch) => batchStore.put(batch)),
-            ...(mutation.batchIdsToDelete || []).map((id) => batchStore.delete(id)),
-            ...(mutation.historyToPut || []).map((entry) => historyStore.put(entry)),
-            ...(mutation.historyIdsToDelete || []).map((id) => historyStore.delete(id))
-        ]);
-
-        await tx.done;
+        });
     },
 
     // --- Migration Helper ---
     async clearAll() {
-        const db = await dbPromise;
-        await db.clear('medications');
-        await db.clear('batches');
-        await db.clear('history');
+        return runMutation(async () => {
+            const db = await dbPromise;
+            await Promise.all(MUTATION_STORES.map((storeName) => db.clear(storeName)));
+        });
     }
 };

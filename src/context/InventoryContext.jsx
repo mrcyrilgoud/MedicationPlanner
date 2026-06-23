@@ -3,9 +3,11 @@ import { useToast } from './ToastContext';
 import { storage } from '../storage';
 import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
 import { applyStoredPreferences, getStoredPreferences } from '../utils/preferences';
+import { broadcastInventorySync, subscribeInventorySync } from '../utils/inventorySync';
 
 const InventoryContext = createContext();
 const HISTORY_SCHEMA_VERSION = 2;
+const LEGACY_STORAGE_KEY = 'med_inventory_v1';
 const EXPIRY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const cloneEntity = (entity) => {
@@ -91,8 +93,7 @@ export const InventoryProvider = ({ children }) => {
         let loadedBatches = await storage.getBatches();
 
         if (storage.type === 'idb' && loadedMeds.length === 0 && loadedBatches.length === 0) {
-          const legacyKey = 'med_inventory_v1';
-          const legacyData = localStorage.getItem(legacyKey);
+          const legacyData = localStorage.getItem(LEGACY_STORAGE_KEY);
           if (legacyData) {
             const parsed = JSON.parse(legacyData);
             const meds = parsed.meds || [];
@@ -105,6 +106,7 @@ export const InventoryProvider = ({ children }) => {
                 history: legacyHistory
               }
             });
+            localStorage.removeItem(LEGACY_STORAGE_KEY);
             loadedMeds = meds;
             loadedBatches = legacyBatches;
             toast.success('Database migrated to new system!');
@@ -123,6 +125,10 @@ export const InventoryProvider = ({ children }) => {
 
     loadData();
   }, [toast]);
+
+  useEffect(() => subscribeInventorySync(() => {
+    refreshInventoryState();
+  }), [refreshInventoryState]);
 
   const medicationMap = useMemo(() => {
     const map = new Map();
@@ -148,6 +154,7 @@ export const InventoryProvider = ({ children }) => {
     medications.forEach((medication) => {
       stats[medication.id] = {
         totalQty: 0,
+        availableQty: 0,
         nextExpiry: null,
         medBatches: [],
         locations: new Set()
@@ -159,7 +166,13 @@ export const InventoryProvider = ({ children }) => {
       if (!entry) return;
 
       entry.medBatches.push(batch);
-      entry.totalQty += Number(batch.currentQuantity || 0);
+      const quantity = Number(batch.currentQuantity || 0);
+      if (quantity > 0) {
+        entry.totalQty += quantity;
+        if (validateExpiryDate(batch.expiryDate)) {
+          entry.availableQty += quantity;
+        }
+      }
       if (batch.location) {
         entry.locations.add(batch.location);
       }
@@ -205,12 +218,12 @@ export const InventoryProvider = ({ children }) => {
       }
 
       const lowThreshold = getLowStockThresholdQuantity(medication);
-      if (medStats.totalQty <= lowThreshold) {
+      if (medStats.availableQty <= lowThreshold) {
         lowStockCount += 1;
       }
 
       const runout = calculateRunoutDate(
-        medStats.totalQty,
+        medStats.availableQty,
         medication.usageRate,
         medication.usageFrequency,
         lowThreshold
@@ -235,7 +248,7 @@ export const InventoryProvider = ({ children }) => {
     const ranked = activeMedications.map((medication) => {
       const medStats = batchStatsByMedication[medication.id] || { totalQty: 0, nextExpiry: null, medBatches: [] };
       const runout = calculateRunoutDate(
-        medStats.totalQty,
+        medStats.availableQty,
         medication.usageRate,
         medication.usageFrequency,
         getLowStockThresholdQuantity(medication)
@@ -243,7 +256,7 @@ export const InventoryProvider = ({ children }) => {
       const nextExpiryDays = medStats.nextExpiry
         ? (medStats.nextExpiry - today) / (1000 * 60 * 60 * 24)
         : null;
-      const lowStock = medStats.totalQty <= getLowStockThresholdQuantity(medication);
+      const lowStock = medStats.availableQty <= getLowStockThresholdQuantity(medication);
       const expiringSoon = typeof nextExpiryDays === 'number' && nextExpiryDays < 30;
       const refillSoon = Boolean(runout && runout.daysUntilEmpty < 14);
 
@@ -314,8 +327,10 @@ export const InventoryProvider = ({ children }) => {
     });
 
     const currentNameMap = new Map();
+    const currentIdMap = new Map();
     medications.forEach((medication) => {
       currentNameMap.set(summarizeName(medication.name), medication);
+      currentIdMap.set(medication.id, medication);
     });
 
     const keptMedicationIds = new Set();
@@ -324,7 +339,18 @@ export const InventoryProvider = ({ children }) => {
 
     backup.medications.forEach((medication) => {
       const normalizedName = summarizeName(medication.name);
+      const existingById = currentIdMap.get(medication.id);
       const duplicateByName = normalizedName && currentNameMap.has(normalizedName) && currentNameMap.get(normalizedName).id !== medication.id;
+      const idCollision = mode === 'merge' && existingById && summarizeName(existingById.name) !== normalizedName;
+
+      if (idCollision) {
+        skippedMedications.push({
+          id: medication.id,
+          name: medication.name,
+          reason: 'id-collision'
+        });
+        return;
+      }
 
       if (mode === 'merge' && duplicateByName) {
         skippedMedications.push({
@@ -431,6 +457,7 @@ export const InventoryProvider = ({ children }) => {
   const applyMutationAndRefresh = useCallback(async (mutation) => {
     await storage.applyMutation(mutation);
     await refreshInventoryState();
+    broadcastInventorySync();
   }, [refreshInventoryState]);
 
   const createMedicationWithBatch = useCallback(async ({ medication, batch, note = '' }) => {
@@ -545,9 +572,22 @@ export const InventoryProvider = ({ children }) => {
       throw new Error('Medication was not found');
     }
 
+    const nextName = (updates.name ?? medication.name ?? '').trim();
+    if (!nextName) {
+      throw new Error('Medication name is required');
+    }
+
+    const duplicate = activeMedications.find(
+      (item) => item.id !== id && summarizeName(item.name) === summarizeName(nextName)
+    );
+    if (duplicate) {
+      throw new Error(`${nextName} already exists. Choose a different name or restock the existing entry.`);
+    }
+
     const updatedMedication = {
       ...cloneEntity(medication),
-      ...cloneEntity(updates)
+      ...cloneEntity(updates),
+      name: nextName
     };
 
     const historyEntry = createHistoryEntry({
@@ -566,7 +606,7 @@ export const InventoryProvider = ({ children }) => {
     });
 
     return updatedMedication;
-  }, [applyMutationAndRefresh, medicationMap]);
+  }, [activeMedications, applyMutationAndRefresh, medicationMap]);
 
   const updateBatch = useCallback(async (batchId, updates, note = '') => {
     const batch = batches.find((item) => item.id === batchId);
@@ -652,13 +692,14 @@ export const InventoryProvider = ({ children }) => {
       throw new Error('Medication was not found');
     }
 
-    const totalAvailable = batchStatsByMedication[medicationId]?.totalQty || 0;
+    const medStats = batchStatsByMedication[medicationId] || { totalQty: 0, availableQty: 0 };
+    const totalAvailable = medStats.totalQty || 0;
     if (Number(amount) > totalAvailable) {
       throw new Error(`Not enough stock. Available: ${totalAvailable}`);
     }
 
     let amountNeeded = Number(amount);
-    const eligibleBatches = (batchStatsByMedication[medicationId]?.medBatches || [])
+    const eligibleBatches = (medStats.medBatches || [])
       .filter((batch) => Number(batch.currentQuantity) > 0)
       .sort((a, b) => {
         const dateA = validateExpiryDate(a.expiryDate) ? new Date(`${a.expiryDate}T00:00:00`) : new Date('9999-12-31');
@@ -880,7 +921,7 @@ export const InventoryProvider = ({ children }) => {
     });
   }, [applyMutationAndRefresh]);
 
-  const importData = useCallback(async ({ backup, mode = 'merge' }) => {
+  const importData = useCallback(async ({ backup, mode = 'merge', applyPreferences = false }) => {
     const analysis = await analyzeBackup(backup, mode);
     if (mode === 'preview-only') {
       return analysis;
@@ -894,8 +935,11 @@ export const InventoryProvider = ({ children }) => {
           history: analysis.sanitizedBackup.history
         }
       });
-      applyStoredPreferences(analysis.sanitizedBackup.preferences);
+      if (applyPreferences) {
+        applyStoredPreferences(analysis.sanitizedBackup.preferences);
+      }
       await refreshInventoryState();
+      broadcastInventorySync();
       return analysis;
     }
 
@@ -909,8 +953,11 @@ export const InventoryProvider = ({ children }) => {
       batchesToPut: analysis.sanitizedBackup.batches,
       historyToPut
     });
-    applyStoredPreferences(analysis.sanitizedBackup.preferences);
+    if (applyPreferences) {
+      applyStoredPreferences(analysis.sanitizedBackup.preferences);
+    }
     await refreshInventoryState();
+    broadcastInventorySync();
     return analysis;
   }, [analyzeBackup, refreshInventoryState]);
 

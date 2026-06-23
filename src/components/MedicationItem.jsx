@@ -39,10 +39,11 @@ const MedicationItem = React.memo(({
     const [editingBatchId, setEditingBatchId] = useState(null);
     const [batchForm, setBatchForm] = useState({});
 
-    const { totalQty, nextExpiry, medBatches } = medStats || { totalQty: 0, nextExpiry: null, medBatches: [] };
+    const { totalQty, availableQty = totalQty, nextExpiry, medBatches } = medStats || { totalQty: 0, nextExpiry: null, medBatches: [] };
+    const stockForAlerts = availableQty ?? totalQty;
     const lowThreshold = getLowStockThresholdQuantity(med);
-    const isLow = totalQty <= lowThreshold;
-    const runoutInfo = calculateRunoutDate(totalQty, med.usageRate, med.usageFrequency, lowThreshold);
+    const isLow = stockForAlerts <= lowThreshold;
+    const runoutInfo = calculateRunoutDate(stockForAlerts, med.usageRate, med.usageFrequency, lowThreshold);
     const isRunningOutSoon = runoutInfo && runoutInfo.daysUntilEmpty < 7;
 
     const handleInfoClick = async (event) => {

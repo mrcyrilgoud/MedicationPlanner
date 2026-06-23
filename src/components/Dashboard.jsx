@@ -38,7 +38,7 @@ const QueueCard = ({ title, subtitle, items, emptyLabel, onNavigate, onTake }) =
                         </div>
 
                         <div className="dashboard-queue-actions">
-                            <button className="btn ghost-btn" onClick={() => onNavigate('inventory', { filter: 'all' })}>
+                            <button className="btn ghost-btn" onClick={() => onNavigate('inventory', { filter: 'all', medicationId: medication.id })}>
                                 Open
                             </button>
                             <button className="btn ghost-btn" onClick={() => onNavigate('shopping-list', { medicationId: medication.id })}>
@@ -64,7 +64,7 @@ const QueueCard = ({ title, subtitle, items, emptyLabel, onNavigate, onTake }) =
 );
 
 const Dashboard = ({ onNavigate }) => {
-    const { activeMedications, getStats, getDashboardQueues, consumeMedication } = useInventory();
+    const { activeMedications, getStats, getDashboardQueues, consumeMedication, loading } = useInventory();
     const toast = useToast();
     const { expiringSoonCount, lowStockCount, projectedEmptyCount } = getStats();
     const queues = getDashboardQueues();
@@ -82,6 +82,14 @@ const Dashboard = ({ onNavigate }) => {
             toast.error(error.message);
         }
     };
+
+    if (loading) {
+        return (
+            <div className="dashboard-empty-state">
+                <p style={{ color: 'var(--text-secondary)' }}>Loading inventory...</p>
+            </div>
+        );
+    }
 
     if (activeMedications.length === 0) {
         return (

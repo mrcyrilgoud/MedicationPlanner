@@ -5,6 +5,7 @@ import ConfirmationModal from './ConfirmationModal';
 import MedicationItem from './MedicationItem';
 import MedicationEditForm from './MedicationEditForm';
 import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
+import { getInhalerUsageDisplay } from '../utils/imageHelpers';
 import { useToast } from '../context/ToastContext';
 
 const FILTER_OPTIONS = [
@@ -19,6 +20,7 @@ const MedicationList = ({
     initialCondition = '',
     initialTag = '',
     initialLocation = '',
+    initialMedicationId = '',
     onNavigate
 }) => {
     const {
@@ -33,7 +35,7 @@ const MedicationList = ({
     } = useInventory();
     const toast = useToast();
 
-    const [expandedId, setExpandedId] = useState(null);
+    const [expandedId, setExpandedId] = useState(initialMedicationId || null);
     const [editingId, setEditingId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState(initialFilter);
@@ -56,6 +58,7 @@ const MedicationList = ({
                     toast.success(`${medication.name} archived.`);
                 } catch (error) {
                     toast.error(error.message);
+                    throw error;
                 }
             }
         });
@@ -68,12 +71,13 @@ const MedicationList = ({
     const startEditing = useCallback((event, medication) => {
         event.stopPropagation();
         setEditingId(medication.id);
+        const inhalerUsage = getInhalerUsageDisplay(medication);
         setEditForm({
             name: medication.name,
             lowStockThreshold: medication.lowStockThreshold,
-            usageRate: medication.usageRate || '',
+            usageRate: inhalerUsage.usageRate,
             usageFrequency: medication.usageFrequency || 'daily',
-            usageBasis: 'base',
+            usageBasis: inhalerUsage.usageBasis,
             notes: medication.notes || '',
             tags: medication.tags || [],
             images: medication.images || [],
@@ -90,6 +94,11 @@ const MedicationList = ({
     const saveEditing = useCallback(async () => {
         const medication = activeMedications.find((item) => item.id === editingId);
         if (!medication) return;
+
+        if (!editForm.name?.trim()) {
+            toast.error('Medication name is required.');
+            return;
+        }
 
         try {
             await editMedication(editingId, {
@@ -154,7 +163,13 @@ const MedicationList = ({
     }, [editMedication, editingId, toast]);
 
     const getMedStats = useCallback((medicationId) => (
-        batchStatsByMedication[medicationId] || { totalQty: 0, nextExpiry: null, medBatches: [], locations: [] }
+        batchStatsByMedication[medicationId] || {
+            totalQty: 0,
+            availableQty: 0,
+            nextExpiry: null,
+            medBatches: [],
+            locations: []
+        }
     ), [batchStatsByMedication]);
 
     const conditionOptions = useMemo(() => (
@@ -188,16 +203,16 @@ const MedicationList = ({
             if (tagFilter && !(medication.tags || []).includes(tagFilter)) return false;
             if (locationFilter && !(getMedStats(medication.id).locations || []).includes(locationFilter)) return false;
 
-            const { totalQty, nextExpiry } = getMedStats(medication.id);
+            const { availableQty, nextExpiry } = getMedStats(medication.id);
             const lowThreshold = getLowStockThresholdQuantity(medication);
-            if (statusFilter === 'low' && totalQty > lowThreshold) return false;
+            if (statusFilter === 'low' && availableQty > lowThreshold) return false;
             if (statusFilter === 'expiring') {
                 if (!nextExpiry) return false;
                 const days = (nextExpiry - new Date()) / (1000 * 60 * 60 * 24);
                 if (days >= 30) return false;
             }
             if (statusFilter === 'projected') {
-                const runout = calculateRunoutDate(totalQty, medication.usageRate, medication.usageFrequency, lowThreshold);
+                const runout = calculateRunoutDate(availableQty, medication.usageRate, medication.usageFrequency, lowThreshold);
                 if (!runout || runout.daysUntilEmpty >= 14) return false;
             }
             return true;
@@ -258,13 +273,22 @@ const MedicationList = ({
         await updateBatch(batchId, updates, 'Updated batch from inventory');
     };
 
-    const handleBatchDiscard = async (batchId) => {
-        try {
-            await discardBatch(batchId);
-            toast.success('Batch discarded.');
-        } catch (error) {
-            toast.error(error.message);
-        }
+    const handleBatchDiscard = (batchId, medicationName) => {
+        setModalConfig({
+            title: 'Discard Batch?',
+            message: `Discard this batch for ${medicationName}? This removes the batch and its remaining quantity from inventory.`,
+            type: 'danger',
+            confirmText: 'Discard Batch',
+            onConfirm: async () => {
+                try {
+                    await discardBatch(batchId);
+                    toast.success('Batch discarded.');
+                } catch (error) {
+                    toast.error(error.message);
+                    throw error;
+                }
+            }
+        });
     };
 
     return (
@@ -381,7 +405,7 @@ const MedicationList = ({
                                         onQuickRestock={(medicationId) => onNavigate?.('add', { mode: 'restock', medicationId })}
                                         onAddToShopping={(medicationId) => onNavigate?.('shopping-list', { medicationId })}
                                         onBatchSave={handleBatchSave}
-                                        onDiscardBatch={handleBatchDiscard}
+                                        onDiscardBatch={(batchId) => handleBatchDiscard(batchId, medication.name)}
                                     >
                                         {editingId === medication.id && (
                                             <MedicationEditForm
