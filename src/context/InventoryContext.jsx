@@ -4,6 +4,7 @@ import { storage } from '../storage';
 import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
 import { applyStoredPreferences, getStoredPreferences } from '../utils/preferences';
 import { broadcastInventorySync, subscribeInventorySync } from '../utils/inventorySync';
+import { filterBackupMedications, summarizeMedicationName as summarizeName } from '../utils/backupAnalysis';
 
 const InventoryContext = createContext();
 const HISTORY_SCHEMA_VERSION = 2;
@@ -60,8 +61,6 @@ const validateExpiryDate = (value) => {
     date.getUTCDate() === day
   );
 };
-
-const summarizeName = (value = '') => value.trim().toLowerCase();
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useInventory = () => useContext(InventoryContext);
@@ -326,44 +325,15 @@ export const InventoryProvider = ({ children }) => {
       history: incomingHistory
     });
 
-    const currentNameMap = new Map();
-    const currentIdMap = new Map();
-    medications.forEach((medication) => {
-      currentNameMap.set(summarizeName(medication.name), medication);
-      currentIdMap.set(medication.id, medication);
-    });
+    const {
+      medicationsToImport: rawMedicationsToImport,
+      skippedMedications,
+      keptMedicationIds,
+      idCollisions,
+      duplicateNameSkips
+    } = filterBackupMedications(backup.medications, { currentMedications: medications, mode });
 
-    const keptMedicationIds = new Set();
-    const skippedMedications = [];
-    const medicationsToImport = [];
-
-    backup.medications.forEach((medication) => {
-      const normalizedName = summarizeName(medication.name);
-      const existingById = currentIdMap.get(medication.id);
-      const duplicateByName = normalizedName && currentNameMap.has(normalizedName) && currentNameMap.get(normalizedName).id !== medication.id;
-      const idCollision = mode === 'merge' && existingById && summarizeName(existingById.name) !== normalizedName;
-
-      if (idCollision) {
-        skippedMedications.push({
-          id: medication.id,
-          name: medication.name,
-          reason: 'id-collision'
-        });
-        return;
-      }
-
-      if (mode === 'merge' && duplicateByName) {
-        skippedMedications.push({
-          id: medication.id,
-          name: medication.name,
-          reason: 'duplicate-name'
-        });
-        return;
-      }
-
-      medicationsToImport.push(cloneEntity(medication));
-      keptMedicationIds.add(medication.id);
-    });
+    const medicationsToImport = rawMedicationsToImport.map((medication) => cloneEntity(medication));
 
     const batchesToImport = [];
     const skippedBatches = [];
@@ -423,8 +393,8 @@ export const InventoryProvider = ({ children }) => {
         orphanedBatches: health.orphanedBatches,
         invalidExpiryBatches: health.invalidExpiryBatches,
         skippedMedications,
-        idCollisions: skippedMedications.filter((item) => item.reason === 'id-collision'),
-        duplicateNameSkips: skippedMedications.filter((item) => item.reason === 'duplicate-name'),
+        idCollisions,
+        duplicateNameSkips,
         skippedBatches,
         skippedHistoryEntries
       },
