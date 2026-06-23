@@ -29,26 +29,3 @@ export const resizeImage = (file, maxWidth = 600, quality = 0.7) => {
         reader.onerror = (error) => reject(error);
     });
 };
-
-export const getInhalerUsageDisplay = (medication) => {
-    const usageRate = Number(medication?.usageRate);
-    if (!usageRate || medication?.defaultUnit !== 'inhaler') {
-        return {
-            usageRate: medication?.usageRate || '',
-            usageBasis: 'base'
-        };
-    }
-
-    const puffsPerCanister = Number(medication.puffsPerCanister) || 200;
-    if (usageRate >= puffsPerCanister && usageRate % puffsPerCanister === 0) {
-        return {
-            usageRate: usageRate / puffsPerCanister,
-            usageBasis: 'container'
-        };
-    }
-
-    return {
-        usageRate,
-        usageBasis: 'base'
-    };
-};

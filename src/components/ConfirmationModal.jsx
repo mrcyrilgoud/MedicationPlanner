@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
+import { useToast } from '../context/ToastContext';
 
 const ConfirmationModal = ({
     isOpen,
@@ -12,6 +13,7 @@ const ConfirmationModal = ({
 }) => {
     const dialogRef = useRef(null);
     const [confirming, setConfirming] = useState(false);
+    const toast = useToast();
 
     useEffect(() => {
         const handleEscape = (event) => {
@@ -52,6 +54,7 @@ const ConfirmationModal = ({
             onClose();
         } catch (error) {
             console.error('Confirmation action failed', error);
+            toast.error(error?.message || 'Something went wrong. Please try again.');
         } finally {
             setConfirming(false);
         }

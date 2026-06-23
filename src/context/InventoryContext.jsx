@@ -422,7 +422,9 @@ export const InventoryProvider = ({ children }) => {
       issues: {
         orphanedBatches: health.orphanedBatches,
         invalidExpiryBatches: health.invalidExpiryBatches,
-        duplicateMedicationNames: skippedMedications,
+        skippedMedications,
+        idCollisions: skippedMedications.filter((item) => item.reason === 'id-collision'),
+        duplicateNameSkips: skippedMedications.filter((item) => item.reason === 'duplicate-name'),
         skippedBatches,
         skippedHistoryEntries
       },

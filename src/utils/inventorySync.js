@@ -1,10 +1,14 @@
 export const INVENTORY_SYNC_CHANNEL = 'med-inventory-sync';
 
+const TAB_ID = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `tab-${Date.now()}`;
+
 export const broadcastInventorySync = () => {
     if (typeof window === 'undefined') return;
     if ('BroadcastChannel' in window) {
         const channel = new BroadcastChannel(INVENTORY_SYNC_CHANNEL);
-        channel.postMessage({ type: 'inventory-updated', at: Date.now() });
+        channel.postMessage({ type: 'inventory-updated', tabId: TAB_ID, at: Date.now() });
         channel.close();
     }
 };
@@ -17,7 +21,10 @@ export const subscribeInventorySync = (callback) => {
     let channel = null;
     if ('BroadcastChannel' in window) {
         channel = new BroadcastChannel(INVENTORY_SYNC_CHANNEL);
-        channel.onmessage = callback;
+        channel.onmessage = (event) => {
+            if (event?.data?.tabId === TAB_ID) return;
+            callback(event);
+        };
     }
 
     const handleVisibility = () => {

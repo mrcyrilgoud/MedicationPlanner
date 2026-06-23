@@ -184,16 +184,16 @@ const DataManagement = ({
             message: `Permanently delete ${medicationName}? This removes all batches and cannot be undone.`,
             type: 'danger',
             confirmText: 'Delete Forever',
-                onConfirm: async () => {
-                    try {
-                        await permanentlyDeleteMedication(medicationId, 'Deleted permanently from settings');
-                        toast.success('Medication deleted permanently.');
-                        refreshHealth();
-                    } catch (error) {
-                        toast.error(error.message);
-                        throw error;
-                    }
+            onConfirm: async () => {
+                try {
+                    await permanentlyDeleteMedication(medicationId, 'Deleted permanently from settings');
+                    toast.success('Medication deleted permanently.');
+                    refreshHealth();
+                } catch (error) {
+                    toast.error(error.message);
+                    throw error;
                 }
+            }
         });
     };
 
@@ -322,11 +322,11 @@ const DataManagement = ({
                         </div>
 
                         <div className="dm-issue-list">
-                            {importPreview.issues.duplicateMedicationNames?.length > 0 && (
-                                <p>Duplicate names skipped: {importPreview.issues.duplicateMedicationNames.map((item) => item.name).join(', ')}</p>
+                            {importPreview.issues.duplicateNameSkips?.length > 0 && (
+                                <p>Duplicate names skipped: {importPreview.issues.duplicateNameSkips.map((item) => item.name).join(', ')}</p>
                             )}
-                            {importPreview.issues.duplicateMedicationNames?.some((item) => item.reason === 'id-collision') && (
-                                <p>ID conflicts skipped: {importPreview.issues.duplicateMedicationNames.filter((item) => item.reason === 'id-collision').map((item) => item.name).join(', ')}</p>
+                            {importPreview.issues.idCollisions?.length > 0 && (
+                                <p>ID conflicts skipped: {importPreview.issues.idCollisions.map((item) => item.name).join(', ')}</p>
                             )}
                             {importPreview.issues.skippedBatches?.length > 0 && (
                                 <p>Skipped batches: {importPreview.issues.skippedBatches.length}</p>

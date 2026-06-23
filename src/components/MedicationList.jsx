@@ -1,11 +1,11 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInventory } from '../context/InventoryContext';
 import { Search, X } from 'lucide-react';
 import ConfirmationModal from './ConfirmationModal';
 import MedicationItem from './MedicationItem';
 import MedicationEditForm from './MedicationEditForm';
 import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
-import { getInhalerUsageDisplay } from '../utils/imageHelpers';
+import { getInhalerUsageDisplay } from '../utils/calculations';
 import { useToast } from '../context/ToastContext';
 
 const FILTER_OPTIONS = [
@@ -31,9 +31,11 @@ const MedicationList = ({
         editMedication,
         linkMedications,
         updateBatch,
-        discardBatch
+        discardBatch,
+        loading
     } = useInventory();
     const toast = useToast();
+    const hasScrolledToInitial = useRef(false);
 
     const [expandedId, setExpandedId] = useState(initialMedicationId || null);
     const [editingId, setEditingId] = useState(null);
@@ -139,6 +141,7 @@ const MedicationList = ({
                     setEditingId(null);
                 } catch (error) {
                     toast.error(error.message);
+                    throw error;
                 }
             }
         });
@@ -157,6 +160,7 @@ const MedicationList = ({
                     toast.success('Medication ungrouped.');
                 } catch (error) {
                     toast.error(error.message);
+                    throw error;
                 }
             }
         });
@@ -260,6 +264,14 @@ const MedicationList = ({
             });
     }, [activeMedications, conditionFilter, getMedStats, locationFilter, searchTerm, sortBy, statusFilter, tagFilter]);
 
+    useEffect(() => {
+        if (!initialMedicationId || hasScrolledToInitial.current) return;
+        const node = document.getElementById(`med-item-${initialMedicationId}`);
+        if (!node) return;
+        node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        hasScrolledToInitial.current = true;
+    }, [initialMedicationId, groupedMedications]);
+
     const handleConsume = async (medicationId, amount) => {
         try {
             await consumeMedication(medicationId, amount, 'Taken from inventory');
@@ -290,6 +302,14 @@ const MedicationList = ({
             }
         });
     };
+
+    if (loading) {
+        return (
+            <div style={{ padding: '2rem 1rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                Loading inventory...
+            </div>
+        );
+    }
 
     return (
         <div className="medication-list">
@@ -393,6 +413,7 @@ const MedicationList = ({
                                 {group.map((medication) => (
                                     <MedicationItem
                                         key={medication.id}
+                                        itemId={`med-item-${medication.id}`}
                                         med={medication}
                                         isGroup={isGroup}
                                         medStats={getMedStats(medication.id)}

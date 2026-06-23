@@ -157,6 +157,9 @@ export const localStorageAdapter = {
 
         if (mutation.medicationIdsToDelete?.length) {
             state.meds = state.meds.filter((item) => !mutation.medicationIdsToDelete.includes(item.id));
+            state.batches = state.batches.filter(
+                (item) => !mutation.medicationIdsToDelete.includes(item.medicationId)
+            );
         }
 
         for (const batch of mutation.batchesToPut || []) {

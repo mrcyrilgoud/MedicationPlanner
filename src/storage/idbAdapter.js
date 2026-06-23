@@ -187,12 +187,21 @@ export const idbAdapter = {
 
             await Promise.all([
                 ...(mutation.medicationsToPut || []).map((medication) => medicationStore.put(medication)),
-                ...(mutation.medicationIdsToDelete || []).map((id) => medicationStore.delete(id)),
                 ...(mutation.batchesToPut || []).map((batch) => batchStore.put(batch)),
                 ...(mutation.batchIdsToDelete || []).map((id) => batchStore.delete(id)),
                 ...(mutation.historyToPut || []).map((entry) => historyStore.put(entry)),
                 ...(mutation.historyIdsToDelete || []).map((id) => historyStore.delete(id))
             ]);
+
+            for (const medicationId of mutation.medicationIdsToDelete || []) {
+                const batchIndex = batchStore.index('medicationId');
+                let batchCursor = await batchIndex.openCursor(IDBKeyRange.only(medicationId));
+                while (batchCursor) {
+                    await batchCursor.delete();
+                    batchCursor = await batchCursor.continue();
+                }
+                await medicationStore.delete(medicationId);
+            }
 
             await tx.done;
         });

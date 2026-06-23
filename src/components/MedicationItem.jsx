@@ -18,6 +18,7 @@ import { getSmartLink } from '../utils/drugApi';
 import ImageModal from './ImageModal';
 
 const MedicationItem = React.memo(({
+    itemId,
     med,
     isGroup,
     medStats,
@@ -90,7 +91,7 @@ const MedicationItem = React.memo(({
     };
 
     return (
-        <div className="med-item" style={isGroup ? { border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', borderRadius: 0, margin: 0 } : {}}>
+        <div id={itemId} className="med-item" style={isGroup ? { border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', borderRadius: 0, margin: 0 } : {}}>
             <ImageModal
                 isOpen={!!selectedImage}
                 imageUrl={selectedImage}

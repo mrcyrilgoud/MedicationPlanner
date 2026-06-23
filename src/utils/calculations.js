@@ -33,6 +33,29 @@ export const calculateRunoutDate = (totalQuantity, usageRate, usageFrequency, lo
     };
 };
 
+export const getInhalerUsageDisplay = (medication) => {
+    const usageRate = Number(medication?.usageRate);
+    if (!usageRate || medication?.defaultUnit !== 'inhaler') {
+        return {
+            usageRate: medication?.usageRate || '',
+            usageBasis: 'base'
+        };
+    }
+
+    const puffsPerCanister = Number(medication.puffsPerCanister) || 200;
+    if (usageRate >= puffsPerCanister && usageRate % puffsPerCanister === 0) {
+        return {
+            usageRate: usageRate / puffsPerCanister,
+            usageBasis: 'container'
+        };
+    }
+
+    return {
+        usageRate,
+        usageBasis: 'base'
+    };
+};
+
 export const getDailyUsageQuantity = (usageRate, usageFrequency) => {
     if (!usageRate || Number(usageRate) <= 0) return null;
 
