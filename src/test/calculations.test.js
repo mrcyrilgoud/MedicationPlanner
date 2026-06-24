@@ -18,14 +18,36 @@ describe('calculations', () => {
         })).toBe(400);
     });
 
-    it('displays whole-canister inhaler usage when divisible', () => {
+    it('uses stored usageBasis instead of guessing from divisibility', () => {
+        expect(getInhalerUsageDisplay({
+            defaultUnit: 'inhaler',
+            usageRate: 400,
+            puffsPerCanister: 200,
+            usageBasis: 'container'
+        })).toEqual({
+            usageRate: 2,
+            usageBasis: 'container'
+        });
+
+        expect(getInhalerUsageDisplay({
+            defaultUnit: 'inhaler',
+            usageRate: 400,
+            puffsPerCanister: 200,
+            usageBasis: 'base'
+        })).toEqual({
+            usageRate: 400,
+            usageBasis: 'base'
+        });
+    });
+
+    it('defaults legacy inhaler records without usageBasis to puffs', () => {
         expect(getInhalerUsageDisplay({
             defaultUnit: 'inhaler',
             usageRate: 400,
             puffsPerCanister: 200
         })).toEqual({
-            usageRate: 2,
-            usageBasis: 'container'
+            usageRate: 400,
+            usageBasis: 'base'
         });
     });
 

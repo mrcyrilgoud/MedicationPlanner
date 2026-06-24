@@ -112,9 +112,10 @@ const MedicationList = ({
                             usageRate: medication.defaultUnit === 'inhaler' && editForm.usageBasis === 'container'
                                 ? Number(editForm.usageRate) * (Number(medication.puffsPerCanister) || 200)
                                 : Number(editForm.usageRate),
-                            usageFrequency: editForm.usageFrequency
+                            usageFrequency: editForm.usageFrequency,
+                            usageBasis: medication.defaultUnit === 'inhaler' ? editForm.usageBasis : null
                         }
-                        : { usageRate: null, usageFrequency: null }
+                        : { usageRate: null, usageFrequency: null, usageBasis: null }
                 ),
                 notes: editForm.notes,
                 tags: editForm.tags,

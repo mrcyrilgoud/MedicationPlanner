@@ -1,15 +1,20 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from './ToastContext';
 import { storage } from '../storage';
 import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
 import { applyStoredPreferences, getStoredPreferences } from '../utils/preferences';
 import { broadcastInventorySync, subscribeInventorySync } from '../utils/inventorySync';
 import { filterBackupMedications, summarizeMedicationName as summarizeName } from '../utils/backupAnalysis';
+import { isValidExpiryDate } from '../utils/expiryDate';
+import {
+  bumpInventoryDataVersion,
+  getInventoryDataVersion,
+  subscribeInventoryDataVersion
+} from '../utils/inventoryVersion';
 
 const InventoryContext = createContext();
 const HISTORY_SCHEMA_VERSION = 2;
 const LEGACY_STORAGE_KEY = 'med_inventory_v1';
-const EXPIRY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const cloneEntity = (entity) => {
   if (!entity) return entity;
@@ -51,16 +56,7 @@ const createHistoryEntry = ({
   timestamp: new Date().toISOString()
 });
 
-const validateExpiryDate = (value) => {
-  if (!EXPIRY_DATE_PATTERN.test(value || '')) return false;
-  const [year, month, day] = value.split('-').map((part) => Number(part));
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
-};
+const validateExpiryDate = isValidExpiryDate;
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useInventory = () => useContext(InventoryContext);
@@ -70,6 +66,7 @@ export const InventoryProvider = ({ children }) => {
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const toast = useToast();
+  const syncedVersionRef = useRef(getInventoryDataVersion());
 
   const refreshInventoryState = useCallback(async () => {
     const [loadedMeds, loadedBatches] = await Promise.all([
@@ -106,6 +103,7 @@ export const InventoryProvider = ({ children }) => {
               }
             });
             localStorage.removeItem(LEGACY_STORAGE_KEY);
+            syncedVersionRef.current = bumpInventoryDataVersion();
             loadedMeds = meds;
             loadedBatches = legacyBatches;
             toast.success('Database migrated to new system!');
@@ -114,6 +112,7 @@ export const InventoryProvider = ({ children }) => {
 
         setMedications(loadedMeds || []);
         setBatches(loadedBatches || []);
+        syncedVersionRef.current = getInventoryDataVersion();
       } catch (error) {
         console.error('Failed to load inventory', error);
         toast.error('Failed to load data');
@@ -125,9 +124,32 @@ export const InventoryProvider = ({ children }) => {
     loadData();
   }, [toast]);
 
-  useEffect(() => subscribeInventorySync(() => {
-    refreshInventoryState();
-  }), [refreshInventoryState]);
+  useEffect(() => {
+    const unsubscribeChannel = subscribeInventorySync({
+      onRemoteUpdate: (data) => {
+        const version = data?.dataVersion ?? getInventoryDataVersion();
+        if (version <= syncedVersionRef.current) return;
+        syncedVersionRef.current = version;
+        toast.info('Inventory updated in another tab.');
+        refreshInventoryState();
+      },
+      onVisibilityRefresh: () => {
+        syncedVersionRef.current = getInventoryDataVersion();
+        refreshInventoryState();
+      }
+    });
+
+    const unsubscribeVersion = subscribeInventoryDataVersion((version) => {
+      if (version <= syncedVersionRef.current) return;
+      syncedVersionRef.current = version;
+      refreshInventoryState();
+    });
+
+    return () => {
+      unsubscribeChannel();
+      unsubscribeVersion();
+    };
+  }, [refreshInventoryState, toast]);
 
   const medicationMap = useMemo(() => {
     const map = new Map();
@@ -426,11 +448,20 @@ export const InventoryProvider = ({ children }) => {
     };
   }, []);
 
-  const applyMutationAndRefresh = useCallback(async (mutation) => {
+  const commitInventoryMutation = useCallback(async (mutation) => {
+    const currentVersion = getInventoryDataVersion();
+    if (currentVersion !== syncedVersionRef.current) {
+      throw new Error('Inventory changed in another tab. Review the latest data before saving.');
+    }
+
     await storage.applyMutation(mutation);
+    const version = bumpInventoryDataVersion();
+    syncedVersionRef.current = version;
     await refreshInventoryState();
-    broadcastInventorySync();
+    broadcastInventorySync({ dataVersion: version });
   }, [refreshInventoryState]);
+
+  const applyMutationAndRefresh = commitInventoryMutation;
 
   const createMedicationWithBatch = useCallback(async ({ medication, batch, note = '' }) => {
     const name = medication?.name?.trim();
@@ -900,7 +931,7 @@ export const InventoryProvider = ({ children }) => {
     }
 
     if (mode === 'replace') {
-      await storage.applyMutation({
+      await commitInventoryMutation({
         replaceAll: {
           medications: analysis.sanitizedBackup.medications,
           batches: analysis.sanitizedBackup.batches,
@@ -910,8 +941,6 @@ export const InventoryProvider = ({ children }) => {
       if (applyPreferences) {
         applyStoredPreferences(analysis.sanitizedBackup.preferences);
       }
-      await refreshInventoryState();
-      broadcastInventorySync();
       return analysis;
     }
 
@@ -920,7 +949,7 @@ export const InventoryProvider = ({ children }) => {
       (entry) => entry?.id && !existingHistoryIds.has(entry.id)
     );
 
-    await storage.applyMutation({
+    await commitInventoryMutation({
       medicationsToPut: analysis.sanitizedBackup.medications,
       batchesToPut: analysis.sanitizedBackup.batches,
       historyToPut
@@ -928,10 +957,8 @@ export const InventoryProvider = ({ children }) => {
     if (applyPreferences) {
       applyStoredPreferences(analysis.sanitizedBackup.preferences);
     }
-    await refreshInventoryState();
-    broadcastInventorySync();
     return analysis;
-  }, [analyzeBackup, refreshInventoryState]);
+  }, [analyzeBackup, commitInventoryMutation]);
 
   const getStats = useCallback(() => stats, [stats]);
   const getDashboardQueues = useCallback(() => dashboardQueues, [dashboardQueues]);

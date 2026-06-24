@@ -341,6 +341,18 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.form-input.invalid {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.25);
+}
+
+.field-error {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--danger);
+  font-size: 0.82rem;
+}
+
 .btn.danger {
   background: rgba(239, 68, 68, 0.16);
   border: 1px solid rgba(239, 68, 68, 0.4);

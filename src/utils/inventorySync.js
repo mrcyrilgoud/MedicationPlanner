@@ -4,16 +4,21 @@ const TAB_ID = typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `tab-${Date.now()}`;
 
-export const broadcastInventorySync = () => {
+export const broadcastInventorySync = ({ dataVersion } = {}) => {
     if (typeof window === 'undefined') return;
     if ('BroadcastChannel' in window) {
         const channel = new BroadcastChannel(INVENTORY_SYNC_CHANNEL);
-        channel.postMessage({ type: 'inventory-updated', tabId: TAB_ID, at: Date.now() });
+        channel.postMessage({
+            type: 'inventory-updated',
+            tabId: TAB_ID,
+            dataVersion,
+            at: Date.now()
+        });
         channel.close();
     }
 };
 
-export const subscribeInventorySync = (callback) => {
+export const subscribeInventorySync = ({ onRemoteUpdate, onVisibilityRefresh }) => {
     if (typeof window === 'undefined') {
         return () => {};
     }
@@ -23,13 +28,13 @@ export const subscribeInventorySync = (callback) => {
         channel = new BroadcastChannel(INVENTORY_SYNC_CHANNEL);
         channel.onmessage = (event) => {
             if (event?.data?.tabId === TAB_ID) return;
-            callback(event);
+            onRemoteUpdate?.(event.data);
         };
     }
 
     const handleVisibility = () => {
         if (document.visibilityState === 'visible') {
-            callback();
+            onVisibilityRefresh?.();
         }
     };
 
