@@ -52,28 +52,6 @@ Object.entries(COMMON_DRUG_ALIASES).forEach(([generic, brands]) => {
 });
 
 /**
- * Checks if two drug names are aliases of each other.
- * @param {string} name1 
- * @param {string} name2 
- * @returns {boolean}
- */
-export const areAliases = (name1, name2) => {
-    if (!name1 || !name2) return false;
-    const key1 = REVERSE_ALIAS_MAP[name1.toLowerCase()];
-    const key2 = REVERSE_ALIAS_MAP[name2.toLowerCase()];
-    return key1 && key2 && key1 === key2;
-};
-
-/**
- * Returns the generic/canonical name for a given drug name if matched.
- * @param {string} name 
- * @returns {string|null}
- */
-export const getCanonicalName = (name) => {
-    return REVERSE_ALIAS_MAP[name.toLowerCase()] || null;
-}
-
-/**
  * Finds the best alias match for a search term.
  * @param {string} term 
  * @returns {{canonical: string, match: string}|null}
@@ -92,8 +70,4 @@ export const findBestMatch = (term) => {
 
     // Partial/Fuzzy match could go here
     return null;
-};
-
-export const getAllAliases = () => {
-    return Object.keys(REVERSE_ALIAS_MAP);
 };

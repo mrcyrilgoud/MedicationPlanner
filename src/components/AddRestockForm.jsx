@@ -3,6 +3,12 @@ import { ArrowRight, PackagePlus, PlusCircle, RotateCcw, Search, Sparkles } from
 import { useInventory } from '../context/InventoryContext';
 import { useToast } from '../context/ToastContext';
 import { findBestMatch } from '../utils/drugAliases';
+import {
+    convertInhalerCanistersToPuffs,
+    convertInhalerUsageInputToStored,
+    getPuffsPerCanister,
+    isInhalerUnit
+} from '../utils/calculations';
 import { getLastBatchLocation, setLastBatchLocation } from '../utils/preferences';
 import { getExpiryDateError } from '../utils/expiryDate';
 
@@ -136,11 +142,11 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
 
     const buildQuantityToStore = (medication) => {
         const quantity = Number(batchForm.quantity);
-        if (medication?.defaultUnit === 'inhaler') {
-            return quantity * (Number(medication.puffsPerCanister) || 200);
-        }
-        if (!medication && medForm.unit === 'inhaler') {
-            return quantity * (Number(medForm.puffsPerCanister) || 200);
+        if (isInhalerUnit(medication || { defaultUnit: medForm.unit })) {
+            const puffsPerCanister = medication
+                ? getPuffsPerCanister(medication)
+                : getPuffsPerCanister(medForm.puffsPerCanister);
+            return convertInhalerCanistersToPuffs(quantity, puffsPerCanister);
         }
         return quantity;
     };
@@ -169,11 +175,12 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
                     return;
                 }
 
-                const normalizedUsage = medForm.usageRate ? (
-                    medForm.unit === 'inhaler' && medForm.usageBasis === 'container'
-                        ? Number(medForm.usageRate) * (Number(medForm.puffsPerCanister) || 200)
-                        : Number(medForm.usageRate)
-                ) : null;
+                const normalizedUsage = convertInhalerUsageInputToStored({
+                    usageRate: medForm.usageRate,
+                    usageBasis: medForm.usageBasis,
+                    puffsPerCanister: medForm.puffsPerCanister,
+                    isInhaler: isInhalerUnit(medForm.unit)
+                });
 
                 const result = await createMedicationWithBatch({
                     medication: {

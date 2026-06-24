@@ -10,7 +10,12 @@ import {
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { useToast } from '../context/ToastContext';
-import { getDailyUsageQuantityForMedication, getLowStockThresholdQuantity } from '../utils/calculations';
+import {
+    convertInhalerDisplayToStored,
+    convertStoredToInhalerDisplay,
+    getDailyUsageQuantityForMedication,
+    getLowStockThresholdQuantity
+} from '../utils/calculations';
 
 const PrescriptionGenerator = ({ initialMedicationId = null }) => {
   const { activeMedications, batches, batchStatsByMedication } = useInventory();
@@ -30,23 +35,13 @@ const PrescriptionGenerator = ({ initialMedicationId = null }) => {
 
   const getDailyRate = (medication) => getDailyUsageQuantityForMedication(medication);
 
-  const convertDisplayAmount = (quantity, medication) => {
-    if (medication.defaultUnit !== 'inhaler') {
-      const normalized = Number(quantity || 0);
-      if (Number.isInteger(normalized)) return normalized;
-      return Number(normalized.toFixed(2));
-    }
-    return Math.max(0, Math.ceil(quantity / (Number(medication.puffsPerCanister) || 200)));
-  };
+  const convertDisplayAmount = (quantity, medication) => (
+    convertStoredToInhalerDisplay(quantity, medication)
+  );
 
-  const convertDisplayAmountToStored = (displayAmount, medication) => {
-    const parsed = Number(displayAmount);
-    if (Number.isNaN(parsed)) return 0;
-    if (medication.defaultUnit !== 'inhaler') {
-      return Math.max(0, parsed);
-    }
-    return Math.max(0, Math.round(parsed * (Number(medication.puffsPerCanister) || 200)));
-  };
+  const convertDisplayAmountToStored = (displayAmount, medication) => (
+    convertInhalerDisplayToStored(displayAmount, medication)
+  );
 
   const getDisplayUnit = (medication) => (
     medication.defaultUnit === 'inhaler' ? 'canisters' : medication.defaultUnit

@@ -1,6 +1,8 @@
+import { isValidExpiryDate } from './expiryDate';
+
 /**
  * Calculates the date when stock will run out based on usage rate.
- * 
+ *
  * @param {number} totalQuantity - Current total quantity of medication
  * @param {number|string} usageRate - Amount used per frequency period
  * @param {string} usageFrequency - 'daily', 'weekly', or 'monthly'
@@ -11,12 +13,10 @@ export const calculateRunoutDate = (totalQuantity, usageRate, usageFrequency, lo
     const dailyRate = getDailyUsageQuantity(usageRate, usageFrequency);
     if (!dailyRate || Number(dailyRate) <= 0) return null;
 
-    // Date Empty
     const daysUntilEmpty = totalQuantity / dailyRate;
     const dateEmpty = new Date();
     dateEmpty.setDate(dateEmpty.getDate() + daysUntilEmpty);
 
-    // Date Low (when quanity hits threshold)
     let daysUntilLow = null;
     let dateLow = null;
     if (totalQuantity > lowThreshold) {
@@ -33,16 +33,75 @@ export const calculateRunoutDate = (totalQuantity, usageRate, usageFrequency, lo
     };
 };
 
+export const getPuffsPerCanister = (medicationOrPuffs) => {
+    if (typeof medicationOrPuffs === 'object' && medicationOrPuffs !== null) {
+        return Number(medicationOrPuffs.puffsPerCanister) || 200;
+    }
+    return Number(medicationOrPuffs) || 200;
+};
+
+export const isInhalerUnit = (unitOrMedication) => {
+    if (typeof unitOrMedication === 'string') {
+        return unitOrMedication === 'inhaler';
+    }
+    return unitOrMedication?.defaultUnit === 'inhaler';
+};
+
+export const convertInhalerCanistersToPuffs = (canisterCount, puffsPerCanister = 200) => (
+    Number(canisterCount) * getPuffsPerCanister(puffsPerCanister)
+);
+
+export const convertInhalerUsageInputToStored = ({
+    usageRate,
+    usageBasis,
+    puffsPerCanister,
+    isInhaler
+}) => {
+    if (!usageRate) return null;
+    if (!isInhaler) return Number(usageRate);
+    return usageBasis === 'container'
+        ? convertInhalerCanistersToPuffs(usageRate, puffsPerCanister)
+        : Number(usageRate);
+};
+
+export const convertInhalerDisplayToStored = (displayAmount, medication) => {
+    const parsed = Number(displayAmount);
+    if (Number.isNaN(parsed)) return 0;
+    if (!isInhalerUnit(medication)) {
+        return Math.max(0, parsed);
+    }
+    return Math.max(0, Math.round(parsed * getPuffsPerCanister(medication)));
+};
+
+export const convertStoredToInhalerDisplay = (storedQuantity, medication) => {
+    if (!isInhalerUnit(medication)) {
+        const normalized = Number(storedQuantity || 0);
+        if (Number.isInteger(normalized)) return normalized;
+        return Number(normalized.toFixed(2));
+    }
+    return Math.max(0, Math.ceil(Number(storedQuantity) / getPuffsPerCanister(medication)));
+};
+
+export const getBatchExpirySortTime = (expiryDate) => (
+    isValidExpiryDate(expiryDate)
+        ? new Date(`${expiryDate}T00:00:00`).getTime()
+        : new Date('9999-12-31').getTime()
+);
+
+export const sortBatchesByExpiry = (batches) => (
+    [...batches].sort((a, b) => getBatchExpirySortTime(a.expiryDate) - getBatchExpirySortTime(b.expiryDate))
+);
+
 export const getInhalerUsageDisplay = (medication) => {
     const usageRate = Number(medication?.usageRate);
-    if (!usageRate || medication?.defaultUnit !== 'inhaler') {
+    if (!usageRate || !isInhalerUnit(medication)) {
         return {
             usageRate: medication?.usageRate || '',
             usageBasis: 'base'
         };
     }
 
-    const puffsPerCanister = Number(medication.puffsPerCanister) || 200;
+    const puffsPerCanister = getPuffsPerCanister(medication);
 
     if (medication.usageBasis === 'container') {
         return {
@@ -73,8 +132,8 @@ export const getDailyUsageQuantityForMedication = (medication) => (
 
 export const getLowStockThresholdQuantity = (medication) => {
     const threshold = Number(medication?.lowStockThreshold || 0);
-    if (medication?.defaultUnit === 'inhaler') {
-        return threshold * (Number(medication?.puffsPerCanister) || 200);
+    if (isInhalerUnit(medication)) {
+        return threshold * getPuffsPerCanister(medication);
     }
     return threshold;
 };

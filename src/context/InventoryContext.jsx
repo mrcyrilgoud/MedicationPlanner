@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from './ToastContext';
 import { storage } from '../storage';
-import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
+import { calculateRunoutDate, getLowStockThresholdQuantity, sortBatchesByExpiry } from '../utils/calculations';
 import { applyStoredPreferences, getStoredPreferences } from '../utils/preferences';
 import { broadcastInventorySync, subscribeInventorySync } from '../utils/inventorySync';
 import { filterBackupMedications, summarizeMedicationName as summarizeName } from '../utils/backupAnalysis';
@@ -56,8 +56,6 @@ const createHistoryEntry = ({
   timestamp: new Date().toISOString()
 });
 
-const validateExpiryDate = isValidExpiryDate;
-
 // eslint-disable-next-line react-refresh/only-export-components
 export const useInventory = () => useContext(InventoryContext);
 
@@ -88,7 +86,7 @@ export const InventoryProvider = ({ children }) => {
         let loadedMeds = await storage.getMedications();
         let loadedBatches = await storage.getBatches();
 
-        if (storage.type === 'idb' && loadedMeds.length === 0 && loadedBatches.length === 0) {
+        if (loadedMeds.length === 0 && loadedBatches.length === 0) {
           const legacyData = localStorage.getItem(LEGACY_STORAGE_KEY);
           if (legacyData) {
             const parsed = JSON.parse(legacyData);
@@ -188,9 +186,9 @@ export const InventoryProvider = ({ children }) => {
 
       entry.medBatches.push(batch);
       const quantity = Number(batch.currentQuantity || 0);
-      if (quantity > 0) {
-        entry.totalQty += quantity;
-        if (validateExpiryDate(batch.expiryDate)) {
+        if (quantity > 0) {
+          entry.totalQty += quantity;
+          if (isValidExpiryDate(batch.expiryDate)) {
           entry.availableQty += quantity;
         }
       }
@@ -198,7 +196,7 @@ export const InventoryProvider = ({ children }) => {
         entry.locations.add(batch.location);
       }
 
-      if (Number(batch.currentQuantity) <= 0 || !validateExpiryDate(batch.expiryDate)) {
+        if (Number(batch.currentQuantity) <= 0 || !isValidExpiryDate(batch.expiryDate)) {
         return;
       }
 
@@ -209,11 +207,7 @@ export const InventoryProvider = ({ children }) => {
     });
 
     Object.values(stats).forEach((entry) => {
-      entry.medBatches.sort((a, b) => {
-        const dateA = validateExpiryDate(a.expiryDate) ? new Date(`${a.expiryDate}T00:00:00`) : new Date('9999-12-31');
-        const dateB = validateExpiryDate(b.expiryDate) ? new Date(`${b.expiryDate}T00:00:00`) : new Date('9999-12-31');
-        return dateA - dateB;
-      });
+      entry.medBatches = sortBatchesByExpiry(entry.medBatches);
       entry.locations = Array.from(entry.locations);
     });
 
@@ -320,7 +314,7 @@ export const InventoryProvider = ({ children }) => {
     }, new Map());
 
     const orphanedBatches = currentBatches.filter((batch) => !medicationIds.has(batch.medicationId));
-    const invalidExpiryBatches = currentBatches.filter((batch) => !validateExpiryDate(batch.expiryDate));
+    const invalidExpiryBatches = currentBatches.filter((batch) => !isValidExpiryDate(batch.expiryDate));
     const missingUsageMedications = currentMedications.filter((medication) => !medication.archivedAt && !Number(medication.usageRate));
     const duplicateMedicationNames = currentMedications.filter((medication) => duplicateNameCounts.get(summarizeName(medication.name)) > 1);
     const archivedCount = currentMedications.filter((medication) => medication.archivedAt).length;
@@ -368,7 +362,7 @@ export const InventoryProvider = ({ children }) => {
         });
         return;
       }
-      if (!validateExpiryDate(batch.expiryDate)) {
+      if (!isValidExpiryDate(batch.expiryDate)) {
         skippedBatches.push({
           id: batch.id,
           reason: 'invalid-expiry'
@@ -461,14 +455,12 @@ export const InventoryProvider = ({ children }) => {
     broadcastInventorySync({ dataVersion: version });
   }, [refreshInventoryState]);
 
-  const applyMutationAndRefresh = commitInventoryMutation;
-
   const createMedicationWithBatch = useCallback(async ({ medication, batch, note = '' }) => {
     const name = medication?.name?.trim();
     if (!name) {
       throw new Error('Medication name is required');
     }
-    if (!batch?.expiryDate || !validateExpiryDate(batch.expiryDate)) {
+    if (!batch?.expiryDate || !isValidExpiryDate(batch.expiryDate)) {
       throw new Error('A valid expiration date is required');
     }
     if (Number(batch.initialQuantity) <= 0) {
@@ -514,21 +506,21 @@ export const InventoryProvider = ({ children }) => {
       }]
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       medicationsToPut: [newMedication],
       batchesToPut: [newBatch],
       historyToPut: [historyEntry]
     });
 
     return { medication: newMedication, batch: newBatch };
-  }, [activeMedications, applyMutationAndRefresh]);
+  }, [activeMedications, commitInventoryMutation]);
 
   const addBatchToMedication = useCallback(async ({ medicationId, batch, note = '' }) => {
     const medication = medicationMap.get(medicationId);
     if (!medication || medication.archivedAt) {
       throw new Error('Medication was not found');
     }
-    if (!batch?.expiryDate || !validateExpiryDate(batch.expiryDate)) {
+    if (!batch?.expiryDate || !isValidExpiryDate(batch.expiryDate)) {
       throw new Error('A valid expiration date is required');
     }
     if (Number(batch.initialQuantity) <= 0) {
@@ -561,13 +553,13 @@ export const InventoryProvider = ({ children }) => {
       }]
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       batchesToPut: [newBatch],
       historyToPut: [historyEntry]
     });
 
     return { batch: newBatch, medication };
-  }, [applyMutationAndRefresh, medicationMap]);
+  }, [commitInventoryMutation, medicationMap]);
 
   const editMedication = useCallback(async (id, updates, note = '') => {
     const medication = medicationMap.get(id);
@@ -603,13 +595,13 @@ export const InventoryProvider = ({ children }) => {
       batchDeltas: []
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       medicationsToPut: [updatedMedication],
       historyToPut: [historyEntry]
     });
 
     return updatedMedication;
-  }, [activeMedications, applyMutationAndRefresh, medicationMap]);
+  }, [activeMedications, commitInventoryMutation, medicationMap]);
 
   const updateBatch = useCallback(async (batchId, updates, note = '') => {
     const batch = batches.find((item) => item.id === batchId);
@@ -622,7 +614,7 @@ export const InventoryProvider = ({ children }) => {
       ...cloneEntity(updates)
     };
 
-    if (!validateExpiryDate(updatedBatch.expiryDate)) {
+    if (!isValidExpiryDate(updatedBatch.expiryDate)) {
       throw new Error('A valid expiration date is required');
     }
     if (Number(updatedBatch.currentQuantity) < 0) {
@@ -647,13 +639,13 @@ export const InventoryProvider = ({ children }) => {
       }]
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       batchesToPut: [updatedBatch],
       historyToPut: [historyEntry]
     });
 
     return updatedBatch;
-  }, [applyMutationAndRefresh, batches, medicationMap]);
+  }, [commitInventoryMutation, batches, medicationMap]);
 
   const discardBatch = useCallback(async (batchId, note = 'Discarded batch') => {
     const batch = batches.find((item) => item.id === batchId);
@@ -679,11 +671,11 @@ export const InventoryProvider = ({ children }) => {
       }]
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       batchIdsToDelete: [batch.id],
       historyToPut: [historyEntry]
     });
-  }, [applyMutationAndRefresh, batches, medicationMap]);
+  }, [commitInventoryMutation, batches, medicationMap]);
 
   const consumeMedication = useCallback(async (medicationId, amount, note = '') => {
     if (Number(amount) <= 0) {
@@ -702,13 +694,9 @@ export const InventoryProvider = ({ children }) => {
     }
 
     let amountNeeded = Number(amount);
-    const eligibleBatches = (medStats.medBatches || [])
-      .filter((batch) => Number(batch.currentQuantity) > 0)
-      .sort((a, b) => {
-        const dateA = validateExpiryDate(a.expiryDate) ? new Date(`${a.expiryDate}T00:00:00`) : new Date('9999-12-31');
-        const dateB = validateExpiryDate(b.expiryDate) ? new Date(`${b.expiryDate}T00:00:00`) : new Date('9999-12-31');
-        return dateA - dateB;
-      });
+    const eligibleBatches = sortBatchesByExpiry(
+      (medStats.medBatches || []).filter((batch) => Number(batch.currentQuantity) > 0)
+    );
 
     const beforeBatches = [];
     const afterBatches = [];
@@ -747,11 +735,11 @@ export const InventoryProvider = ({ children }) => {
       metadata: { amount: Number(amount) }
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       batchesToPut: afterBatches,
       historyToPut: [historyEntry]
     });
-  }, [applyMutationAndRefresh, batchStatsByMedication, medicationMap]);
+  }, [commitInventoryMutation, batchStatsByMedication, medicationMap]);
 
   const archiveMedication = useCallback(async (id, note = '') => {
     const medication = medicationMap.get(id);
@@ -773,11 +761,11 @@ export const InventoryProvider = ({ children }) => {
       afterSnapshot: { medications: [archivedMedication] }
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       medicationsToPut: [archivedMedication],
       historyToPut: [historyEntry]
     });
-  }, [applyMutationAndRefresh, medicationMap]);
+  }, [commitInventoryMutation, medicationMap]);
 
   const restoreMedication = useCallback(async (id, note = '') => {
     const medication = medicationMap.get(id);
@@ -809,11 +797,11 @@ export const InventoryProvider = ({ children }) => {
       afterSnapshot: { medications: [restoredMedication] }
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       medicationsToPut: [restoredMedication],
       historyToPut: [historyEntry]
     });
-  }, [activeMedications, applyMutationAndRefresh, medicationMap]);
+  }, [activeMedications, commitInventoryMutation, medicationMap]);
 
   const permanentlyDeleteMedication = useCallback(async (id, note = '') => {
     const medication = medicationMap.get(id);
@@ -840,12 +828,12 @@ export const InventoryProvider = ({ children }) => {
       }))
     });
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       medicationIdsToDelete: [id],
       batchIdsToDelete: relatedBatches.map((batch) => batch.id),
       historyToPut: [historyEntry]
     });
-  }, [applyMutationAndRefresh, batches, medicationMap]);
+  }, [commitInventoryMutation, batches, medicationMap]);
 
   const linkMedications = useCallback(async (primaryId, secondaryId) => {
     const primary = medicationMap.get(primaryId);
@@ -911,7 +899,7 @@ export const InventoryProvider = ({ children }) => {
     });
     updatedEntry.revertedByEntryId = revertEntry.id;
 
-    await applyMutationAndRefresh({
+    await commitInventoryMutation({
       medicationsToPut: beforeSnapshot.medications,
       medicationIdsToDelete: afterSnapshot.medications
         .filter((medication) => !beforeMedicationIds.has(medication.id))
@@ -922,7 +910,7 @@ export const InventoryProvider = ({ children }) => {
         .map((batch) => batch.id),
       historyToPut: [updatedEntry, revertEntry]
     });
-  }, [applyMutationAndRefresh]);
+  }, [commitInventoryMutation]);
 
   const importData = useCallback(async ({ backup, mode = 'merge', applyPreferences = false }) => {
     const analysis = await analyzeBackup(backup, mode);
@@ -960,15 +948,14 @@ export const InventoryProvider = ({ children }) => {
     return analysis;
   }, [analyzeBackup, commitInventoryMutation]);
 
-  const getStats = useCallback(() => stats, [stats]);
-  const getDashboardQueues = useCallback(() => dashboardQueues, [dashboardQueues]);
-
   const value = useMemo(() => ({
     medications,
     activeMedications,
     archivedMedications,
     batches,
     batchStatsByMedication,
+    stats,
+    dashboardQueues,
     loading,
     createMedicationWithBatch,
     addBatchToMedication,
@@ -979,9 +966,6 @@ export const InventoryProvider = ({ children }) => {
     archiveMedication,
     restoreMedication,
     permanentlyDeleteMedication,
-    getStats,
-    getDashboardQueues,
-    calculateRunoutDate,
     linkMedications,
     getHistoryLog,
     getHistoryTotalCount,
@@ -997,6 +981,8 @@ export const InventoryProvider = ({ children }) => {
     archivedMedications,
     batches,
     batchStatsByMedication,
+    stats,
+    dashboardQueues,
     loading,
     createMedicationWithBatch,
     addBatchToMedication,
@@ -1007,8 +993,6 @@ export const InventoryProvider = ({ children }) => {
     archiveMedication,
     restoreMedication,
     permanentlyDeleteMedication,
-    getStats,
-    getDashboardQueues,
     linkMedications,
     getHistoryLog,
     getHistoryTotalCount,
