@@ -2,8 +2,8 @@ const DEFAULT_VIEW = 'dashboard';
 
 export const parseRoute = (hash) => {
     const normalized = (hash || '').replace(/^#/, '');
-    const [path = DEFAULT_VIEW, query = ''] = normalized.split('?');
-    const view = path || DEFAULT_VIEW;
+    const [rawPath = DEFAULT_VIEW, query = ''] = normalized.split('?');
+    const view = rawPath.replace(/^\/+/, '') || DEFAULT_VIEW;
     const searchParams = new URLSearchParams(query);
     const params = {};
 
