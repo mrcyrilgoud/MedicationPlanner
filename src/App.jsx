@@ -121,11 +121,12 @@ function App() {
         return (
           <Suspense fallback={<ViewLoadingState />}>
             <MedicationList
-              key={`inventory:${viewParams.filter || 'all'}:${viewParams.condition || ''}:${viewParams.tag || ''}:${viewParams.location || ''}`}
+              key={`inventory:${viewParams.filter || 'all'}:${viewParams.condition || ''}:${viewParams.tag || ''}:${viewParams.location || ''}:${viewParams.medicationId || ''}`}
               initialFilter={viewParams.filter || 'all'}
               initialCondition={viewParams.condition || ''}
               initialTag={viewParams.tag || ''}
               initialLocation={viewParams.location || ''}
+              initialMedicationId={viewParams.medicationId || ''}
               onNavigate={handleNavigate}
             />
           </Suspense>

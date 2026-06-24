@@ -63,7 +63,9 @@ const PrescriptionGenerator = ({ initialMedicationId = null }) => {
     const expiringWithinWindow = medicationBatches
       .filter((batch) => new Date(`${batch.expiryDate}T00:00:00`) < targetDate)
       .reduce((sum, batch) => sum + Number(batch.currentQuantity || 0), 0);
-    const currentStock = batchStatsByMedication[medication.id]?.totalQty || 0;
+    const currentStock = batchStatsByMedication[medication.id]?.availableQty
+      ?? batchStatsByMedication[medication.id]?.totalQty
+      ?? 0;
     const effectiveStock = Math.max(0, currentStock - expiringWithinWindow);
     const targetTotal = dailyRate * 30 * months;
 
@@ -81,7 +83,9 @@ const PrescriptionGenerator = ({ initialMedicationId = null }) => {
 
     activeMedications.forEach((medication) => {
       const calculation = calculateNeed(medication, 1);
-      const currentStock = batchStatsByMedication[medication.id]?.totalQty || 0;
+      const currentStock = batchStatsByMedication[medication.id]?.availableQty
+      ?? batchStatsByMedication[medication.id]?.totalQty
+      ?? 0;
       const isLowStock = currentStock <= getLowStockThresholdQuantity(medication);
       const override = selectionOverrides[medication.id];
       const usageKnown = Boolean(getDailyRate(medication));

@@ -18,6 +18,7 @@ import { getSmartLink } from '../utils/drugApi';
 import ImageModal from './ImageModal';
 
 const MedicationItem = React.memo(({
+    itemId,
     med,
     isGroup,
     medStats,
@@ -39,10 +40,11 @@ const MedicationItem = React.memo(({
     const [editingBatchId, setEditingBatchId] = useState(null);
     const [batchForm, setBatchForm] = useState({});
 
-    const { totalQty, nextExpiry, medBatches } = medStats || { totalQty: 0, nextExpiry: null, medBatches: [] };
+    const { totalQty, availableQty = totalQty, nextExpiry, medBatches } = medStats || { totalQty: 0, nextExpiry: null, medBatches: [] };
+    const stockForAlerts = availableQty ?? totalQty;
     const lowThreshold = getLowStockThresholdQuantity(med);
-    const isLow = totalQty <= lowThreshold;
-    const runoutInfo = calculateRunoutDate(totalQty, med.usageRate, med.usageFrequency, lowThreshold);
+    const isLow = stockForAlerts <= lowThreshold;
+    const runoutInfo = calculateRunoutDate(stockForAlerts, med.usageRate, med.usageFrequency, lowThreshold);
     const isRunningOutSoon = runoutInfo && runoutInfo.daysUntilEmpty < 7;
 
     const handleInfoClick = async (event) => {
@@ -89,7 +91,7 @@ const MedicationItem = React.memo(({
     };
 
     return (
-        <div className="med-item" style={isGroup ? { border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', borderRadius: 0, margin: 0 } : {}}>
+        <div id={itemId} className="med-item" style={isGroup ? { border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', borderRadius: 0, margin: 0 } : {}}>
             <ImageModal
                 isOpen={!!selectedImage}
                 imageUrl={selectedImage}

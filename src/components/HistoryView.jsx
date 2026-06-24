@@ -173,7 +173,7 @@ const HistoryView = () => {
                 <div>
                     <h1 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Activity History</h1>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        Journaled inventory changes with reversible snapshots.
+                        Journaled inventory changes with reversible snapshots. Revert the newest change for a medication before undoing older ones.
                     </p>
                 </div>
             </header>

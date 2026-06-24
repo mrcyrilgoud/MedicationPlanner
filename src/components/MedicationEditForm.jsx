@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Camera, Save } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
-import { resizeImage } from '../utils/imageHelpers';
+import { MAX_MEDICATION_IMAGES, resizeImage } from '../utils/imageHelpers';
 
 const MedicationEditForm = ({ med, editForm, setEditForm, onSave, onCancel, medications, onLink, onUngroup }) => {
     const toast = useToast();
@@ -11,6 +11,10 @@ const MedicationEditForm = ({ med, editForm, setEditForm, onSave, onCancel, medi
             const file = e.target.files[0];
             if (!file.type.startsWith('image/')) {
                 toast.error('Please upload a valid image file');
+                return;
+            }
+            if ((editForm.images || []).length >= MAX_MEDICATION_IMAGES) {
+                toast.error(`You can attach up to ${MAX_MEDICATION_IMAGES} photos per medication.`);
                 return;
             }
             try {
@@ -213,7 +217,7 @@ const MedicationEditForm = ({ med, editForm, setEditForm, onSave, onCancel, medi
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                     <label style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>Photos</label>
                     <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                        {editForm.images?.length || 0} attached
+                        {editForm.images?.length || 0}/{MAX_MEDICATION_IMAGES} attached
                     </span>
                 </div>
 

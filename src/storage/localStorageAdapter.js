@@ -1,3 +1,5 @@
+import { normalizeStorageError } from './storageErrors';
+
 const STORAGE_KEY = 'med_inventory_v1';
 
 const readState = () => {
@@ -155,6 +157,9 @@ export const localStorageAdapter = {
 
         if (mutation.medicationIdsToDelete?.length) {
             state.meds = state.meds.filter((item) => !mutation.medicationIdsToDelete.includes(item.id));
+            state.batches = state.batches.filter(
+                (item) => !mutation.medicationIdsToDelete.includes(item.medicationId)
+            );
         }
 
         for (const batch of mutation.batchesToPut || []) {
@@ -187,6 +192,10 @@ export const localStorageAdapter = {
     },
 
     _persist(meds, batches, history = []) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ meds, batches, history }));
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ meds, batches, history }));
+        } catch (error) {
+            throw normalizeStorageError(error);
+        }
     }
 };

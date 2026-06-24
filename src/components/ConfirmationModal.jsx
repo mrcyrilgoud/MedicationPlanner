@@ -1,22 +1,29 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
+import { useToast } from '../context/ToastContext';
 
-const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirmText = 'Confirm', type = 'danger' }) => {
+const ConfirmationModal = ({
+    isOpen,
+    onClose,
+    onConfirm,
+    title,
+    message,
+    confirmText = 'Confirm',
+    type = 'danger'
+}) => {
     const dialogRef = useRef(null);
+    const [confirming, setConfirming] = useState(false);
+    const toast = useToast();
 
     useEffect(() => {
-        const handleEscape = (e) => {
-            if (e.key === 'Escape') onClose();
+        const handleEscape = (event) => {
+            if (event.key === 'Escape' && !confirming) onClose();
         };
 
         if (isOpen) {
             document.addEventListener('keydown', handleEscape);
-            // Lock body scroll
             document.body.style.overflow = 'hidden';
 
-            // Focus safety: Focus the 'Cancel' button by default to prevent accidental deletion
-            // We need a timeout to wait for render if not using a ref to the button directly, 
-            // but finding the first button in the modal is a common pattern.
             setTimeout(() => {
                 const cancelButton = dialogRef.current?.querySelector('.btn.secondary');
                 if (cancelButton) cancelButton.focus();
@@ -27,17 +34,37 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
             document.removeEventListener('keydown', handleEscape);
             document.body.style.overflow = 'unset';
         };
-    }, [isOpen, onClose]);
+    }, [confirming, isOpen, onClose]);
+
+    useEffect(() => {
+        if (!isOpen) {
+            setConfirming(false);
+        }
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
     const isDanger = type === 'danger';
 
+    const handleConfirm = async () => {
+        if (confirming) return;
+        setConfirming(true);
+        try {
+            await Promise.resolve(onConfirm?.());
+            onClose();
+        } catch (error) {
+            console.error('Confirmation action failed', error);
+            toast.error(error?.message || 'Something went wrong. Please try again.');
+        } finally {
+            setConfirming(false);
+        }
+    };
+
     return (
-        <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-overlay" onClick={confirming ? undefined : onClose}>
             <div
                 className="modal-container"
-                onClick={e => e.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
                 role="dialog"
                 aria-modal="true"
                 ref={dialogRef}
@@ -48,7 +75,7 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
                         {isDanger && <AlertTriangle className="text-danger" size={20} style={{ marginRight: 8 }} />}
                         {title}
                     </h3>
-                    <button className="modal-close-btn" onClick={onClose}>
+                    <button className="modal-close-btn" onClick={onClose} disabled={confirming}>
                         <X size={20} />
                     </button>
                 </div>
@@ -58,17 +85,15 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
                 </div>
 
                 <div className="modal-footer">
-                    <button className="btn secondary" onClick={onClose}>
+                    <button className="btn secondary" onClick={onClose} disabled={confirming}>
                         Cancel
                     </button>
                     <button
                         className={`btn ${isDanger ? 'danger' : 'primary'}`}
-                        onClick={() => {
-                            onConfirm();
-                            onClose();
-                        }}
+                        onClick={handleConfirm}
+                        disabled={confirming}
                     >
-                        {confirmText}
+                        {confirming ? 'Working...' : confirmText}
                     </button>
                 </div>
             </div>

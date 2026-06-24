@@ -18,6 +18,7 @@ import './DataManagement.css';
 import { useToast } from '../context/ToastContext';
 import { useInventory } from '../context/InventoryContext';
 import IconRadioGroup from './forms/IconRadioGroup';
+import ConfirmationModal from './ConfirmationModal';
 
 const DataManagement = ({
     currentMode,
@@ -42,6 +43,8 @@ const DataManagement = ({
     const [pendingImport, setPendingImport] = useState(null);
     const [importPreview, setImportPreview] = useState(null);
     const [dataHealth, setDataHealth] = useState(null);
+    const [applyPreferencesFromBackup, setApplyPreferencesFromBackup] = useState(false);
+    const [modalConfig, setModalConfig] = useState(null);
 
     const refreshHealth = async () => {
         const health = await validateDataHealth();
@@ -123,9 +126,40 @@ const DataManagement = ({
 
     const handleApplyImport = async () => {
         if (!pendingImport) return;
+
+        if (importMode === 'replace') {
+            setModalConfig({
+                title: 'Replace All Inventory Data?',
+                message: 'This permanently clears your current medications, batches, and history, then restores the selected backup. Export a fresh backup first if you need a copy of today\'s data.',
+                type: 'danger',
+                confirmText: 'Replace Everything',
+                onConfirm: async () => {
+                    try {
+                        await importData({
+                            backup: pendingImport,
+                            mode: importMode,
+                            applyPreferences: applyPreferencesFromBackup
+                        });
+                        toast.success('Replaced backup successfully.');
+                        setPendingImport(null);
+                        setImportPreview(null);
+                        refreshHealth();
+                    } catch (error) {
+                        toast.error(error.message);
+                        throw error;
+                    }
+                }
+            });
+            return;
+        }
+
         try {
-            await importData({ backup: pendingImport, mode: importMode });
-            toast.success(`${importMode === 'replace' ? 'Replaced' : 'Merged'} backup successfully.`);
+            await importData({
+                backup: pendingImport,
+                mode: importMode,
+                applyPreferences: applyPreferencesFromBackup
+            });
+            toast.success('Merged backup successfully.');
             setPendingImport(null);
             setImportPreview(null);
             refreshHealth();
@@ -144,14 +178,23 @@ const DataManagement = ({
         }
     };
 
-    const handlePermanentDelete = async (medicationId) => {
-        try {
-            await permanentlyDeleteMedication(medicationId, 'Deleted permanently from settings');
-            toast.success('Medication deleted permanently.');
-            refreshHealth();
-        } catch (error) {
-            toast.error(error.message);
-        }
+    const handlePermanentDelete = (medicationId, medicationName) => {
+        setModalConfig({
+            title: 'Delete Permanently?',
+            message: `Permanently delete ${medicationName}? This removes all batches and cannot be undone.`,
+            type: 'danger',
+            confirmText: 'Delete Forever',
+            onConfirm: async () => {
+                try {
+                    await permanentlyDeleteMedication(medicationId, 'Deleted permanently from settings');
+                    toast.success('Medication deleted permanently.');
+                    refreshHealth();
+                } catch (error) {
+                    toast.error(error.message);
+                    throw error;
+                }
+            }
+        });
     };
 
     const viewOptions = [
@@ -177,6 +220,16 @@ const DataManagement = ({
 
     return (
         <div className="data-management-container">
+            <ConfirmationModal
+                isOpen={!!modalConfig}
+                onClose={() => setModalConfig(null)}
+                onConfirm={modalConfig?.onConfirm}
+                title={modalConfig?.title}
+                message={modalConfig?.message}
+                type={modalConfig?.type}
+                confirmText={modalConfig?.confirmText}
+            />
+
             <h2 className="dm-header">
                 <Database /> Data Management
             </h2>
@@ -231,8 +284,17 @@ const DataManagement = ({
 
                 <div className="restore-warning">
                     <AlertCircle size={20} color="var(--warning)" style={{ flexShrink: 0, marginTop: 2 }} />
-                    <span>Duplicate medication names are skipped in merge mode. Orphaned batches and invalid expiry dates are rejected.</span>
+                    <span>Duplicate medication names and ID conflicts are skipped in merge mode. Orphaned batches and invalid expiry dates are rejected.</span>
                 </div>
+
+                <label className="import-mode-card" style={{ marginTop: '0.75rem' }}>
+                    <input
+                        type="checkbox"
+                        checked={applyPreferencesFromBackup}
+                        onChange={(event) => setApplyPreferencesFromBackup(event.target.checked)}
+                    />
+                    <span>Also apply theme, layout, and location preferences from backup</span>
+                </label>
 
                 <input
                     type="file"
@@ -260,8 +322,11 @@ const DataManagement = ({
                         </div>
 
                         <div className="dm-issue-list">
-                            {importPreview.issues.duplicateMedicationNames?.length > 0 && (
-                                <p>Duplicate names skipped: {importPreview.issues.duplicateMedicationNames.map((item) => item.name).join(', ')}</p>
+                            {importPreview.issues.duplicateNameSkips?.length > 0 && (
+                                <p>Duplicate names skipped: {importPreview.issues.duplicateNameSkips.map((item) => item.name).join(', ')}</p>
+                            )}
+                            {importPreview.issues.idCollisions?.length > 0 && (
+                                <p>ID conflicts skipped: {importPreview.issues.idCollisions.map((item) => item.name).join(', ')}</p>
                             )}
                             {importPreview.issues.skippedBatches?.length > 0 && (
                                 <p>Skipped batches: {importPreview.issues.skippedBatches.length}</p>
@@ -333,7 +398,7 @@ const DataManagement = ({
                                     <button className="btn secondary" style={{ width: 'auto' }} onClick={() => handleRestoreMedication(medication.id)}>
                                         Restore
                                     </button>
-                                    <button className="btn danger" style={{ width: 'auto' }} onClick={() => handlePermanentDelete(medication.id)}>
+                                    <button className="btn danger" style={{ width: 'auto' }} onClick={() => handlePermanentDelete(medication.id, medication.name)}>
                                         <Trash2 size={14} />
                                         Delete
                                     </button>

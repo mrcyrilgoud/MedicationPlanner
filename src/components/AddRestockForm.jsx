@@ -122,6 +122,13 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
         return quantity;
     };
 
+    const resolveRestockMedication = () => {
+        if (selectedMedication) return selectedMedication;
+        const term = searchTerm.trim().toLowerCase();
+        if (!term) return null;
+        return activeMedications.find((medication) => medication.name.trim().toLowerCase() === term) || null;
+    };
+
     const handleSubmit = async (event) => {
         event.preventDefault();
         const submitAction = event.nativeEvent?.submitter?.value || 'done';
@@ -175,15 +182,16 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
                 resultingMedication = result.medication;
                 toast.success(`${resultingMedication.name} created and stocked.`);
             } else if (mode === 'restock') {
-                if (!selectedMedication) {
+                const medicationToRestock = resolveRestockMedication();
+                if (!medicationToRestock) {
                     toast.error('Choose a medication to restock.');
                     return;
                 }
 
                 await addBatchToMedication({
-                    medicationId: selectedMedication.id,
+                    medicationId: medicationToRestock.id,
                     batch: {
-                        initialQuantity: buildQuantityToStore(selectedMedication),
+                        initialQuantity: buildQuantityToStore(medicationToRestock),
                         expiryDate: batchForm.expiry,
                         location: batchForm.location,
                         dosage: batchForm.dosage,
@@ -191,7 +199,8 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
                     },
                     note: 'Restocked from add flow'
                 });
-                toast.success(`Restocked ${selectedMedication.name}.`);
+                toast.success(`Restocked ${medicationToRestock.name}.`);
+                resultingMedication = medicationToRestock;
             } else {
                 toast.error('Choose a workflow first.');
                 return;
