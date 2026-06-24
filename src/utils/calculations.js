@@ -43,7 +43,8 @@ export const getInhalerUsageDisplay = (medication) => {
     }
 
     const puffsPerCanister = Number(medication.puffsPerCanister) || 200;
-    if (usageRate >= puffsPerCanister && usageRate % puffsPerCanister === 0) {
+
+    if (medication.usageBasis === 'container') {
         return {
             usageRate: usageRate / puffsPerCanister,
             usageBasis: 'container'

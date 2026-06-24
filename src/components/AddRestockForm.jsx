@@ -4,6 +4,7 @@ import { useInventory } from '../context/InventoryContext';
 import { useToast } from '../context/ToastContext';
 import { findBestMatch } from '../utils/drugAliases';
 import { getLastBatchLocation, setLastBatchLocation } from '../utils/preferences';
+import { getExpiryDateError } from '../utils/expiryDate';
 
 const createEmptyMedicationState = () => ({
     name: '',
@@ -42,6 +43,7 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
     const [linkedGroup, setLinkedGroup] = useState(null);
     const [medForm, setMedForm] = useState(createEmptyMedicationState);
     const [batchForm, setBatchForm] = useState(createEmptyBatchState);
+    const [batchErrors, setBatchErrors] = useState({});
 
     const selectedMedication = useMemo(
         () => activeMedications.find((item) => item.id === selectedMedicationId) || null,
@@ -81,10 +83,30 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
 
     const updateBatchForm = (key, value) => {
         setBatchForm((prev) => ({ ...prev, [key]: value }));
+        if (key === 'expiry' && batchErrors.expiry) {
+            setBatchErrors((prev) => ({ ...prev, expiry: getExpiryDateError(value) }));
+        }
+        if (key === 'quantity' && batchErrors.quantity && Number(value) > 0) {
+            setBatchErrors((prev) => ({ ...prev, quantity: null }));
+        }
+    };
+
+    const validateBatchForm = () => {
+        const errors = {};
+        const expiryError = getExpiryDateError(batchForm.expiry);
+        if (expiryError) {
+            errors.expiry = expiryError;
+        }
+        if (Number(batchForm.quantity) <= 0) {
+            errors.quantity = 'Quantity must be greater than 0.';
+        }
+        setBatchErrors(errors);
+        return Object.keys(errors).length === 0;
     };
 
     const resetBatchOnly = () => {
         setBatchForm(createEmptyBatchState());
+        setBatchErrors({});
     };
 
     const resetForAnother = (nextMode = mode) => {
@@ -94,6 +116,7 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
         setLinkedGroup(null);
         setMedForm(createEmptyMedicationState());
         setBatchForm(createEmptyBatchState());
+        setBatchErrors({});
     };
 
     const addTag = () => {
@@ -133,12 +156,7 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
         event.preventDefault();
         const submitAction = event.nativeEvent?.submitter?.value || 'done';
 
-        if (!batchForm.expiry) {
-            toast.error('Add an expiration date before saving.');
-            return;
-        }
-        if (Number(batchForm.quantity) <= 0) {
-            toast.error('Quantity must be greater than 0.');
+        if (!validateBatchForm()) {
             return;
         }
 
@@ -167,6 +185,7 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
                         notes: medForm.notes,
                         condition: medForm.condition,
                         puffsPerCanister: medForm.unit === 'inhaler' ? Number(medForm.puffsPerCanister) : null,
+                        usageBasis: medForm.unit === 'inhaler' && normalizedUsage ? medForm.usageBasis : null,
                         tags: medForm.tags,
                         groupId: linkedGroup ? (linkedGroup.groupId || linkedGroup.id) : undefined
                     },
@@ -523,20 +542,35 @@ const AddRestockForm = ({ initialMode = null, initialMedicationId = null, onComp
                                 <input
                                     type="number"
                                     min="1"
-                                    className="form-input"
+                                    className={`form-input ${batchErrors.quantity ? 'invalid' : ''}`}
                                     value={batchForm.quantity}
                                     onChange={(event) => updateBatchForm('quantity', event.target.value)}
                                 />
+                                {batchErrors.quantity && (
+                                    <span className="field-error">{batchErrors.quantity}</span>
+                                )}
                             </div>
 
                             <div className="form-group">
                                 <label className="form-label">Expiration Date</label>
                                 <input
                                     type="date"
-                                    className="form-input"
+                                    required
+                                    className={`form-input ${batchErrors.expiry ? 'invalid' : ''}`}
                                     value={batchForm.expiry}
                                     onChange={(event) => updateBatchForm('expiry', event.target.value)}
+                                    onBlur={() => {
+                                        if (batchForm.expiry) {
+                                            setBatchErrors((prev) => ({
+                                                ...prev,
+                                                expiry: getExpiryDateError(batchForm.expiry)
+                                            }));
+                                        }
+                                    }}
                                 />
+                                {batchErrors.expiry && (
+                                    <span className="field-error">{batchErrors.expiry}</span>
+                                )}
                             </div>
                         </div>
 
