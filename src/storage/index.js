@@ -1,80 +1,35 @@
 import { idbAdapter } from './idbAdapter';
-import { localStorageAdapter } from './localStorageAdapter';
-
-// Configuration: Change this to explore different backends
-// could be 'idb' or 'local'
-const CURRENT_ADAPTER_TYPE = 'idb';
-
-const adapter = CURRENT_ADAPTER_TYPE === 'idb' ? idbAdapter : localStorageAdapter;
 
 export const storage = {
-    type: CURRENT_ADAPTER_TYPE,
-
     async getMedications() {
-        return adapter.getMedications();
-    },
-
-    async saveMedication(med) { // upsert
-        return adapter.saveMedication(med);
-    },
-
-    async deleteMedication(id) {
-        return adapter.deleteMedication(id);
+        return idbAdapter.getMedications();
     },
 
     async getBatches() {
-        return adapter.getBatches();
-    },
-
-    async saveBatch(batch) { // upsert
-        return adapter.saveBatch(batch);
-    },
-
-    async saveBatches(batches) { // array upsert
-        if (adapter.saveBatches) return adapter.saveBatches(batches);
-        // Fallback
-        return Promise.all(batches.map(b => adapter.saveBatch(b)));
-    },
-
-    async deleteBatch(id) {
-        return adapter.deleteBatch(id);
-    },
-
-    // --- History ---
-    async addHistoryEntry(entry) {
-        if (adapter.addHistoryEntry) return adapter.addHistoryEntry(entry);
+        return idbAdapter.getBatches();
     },
 
     async getHistory(pagination) {
-        if (adapter.getHistory) return adapter.getHistory(pagination);
-        return [];
+        return idbAdapter.getHistory(pagination);
     },
 
     async getHistoryCount() {
-        if (adapter.getHistoryCount) return adapter.getHistoryCount();
-        return 0;
+        return idbAdapter.getHistoryCount();
     },
 
     async getAllHistory() {
-        if (adapter.getAllHistory) return adapter.getAllHistory();
-        return [];
-    },
-
-    async deleteHistoryEntry(id) {
-        if (adapter.deleteHistoryEntry) return adapter.deleteHistoryEntry(id);
+        return idbAdapter.getAllHistory();
     },
 
     async updateHistoryEntry(id, data) {
-        if (adapter.updateHistoryEntry) return adapter.updateHistoryEntry(id, data);
+        return idbAdapter.updateHistoryEntry(id, data);
     },
 
     async applyMutation(mutation) {
-        if (adapter.applyMutation) return adapter.applyMutation(mutation);
-        throw new Error('Atomic mutations are not supported by the active adapter');
+        return idbAdapter.applyMutation(mutation);
     },
 
-    // Migration / Debug
     async clear() {
-        if (adapter.clearAll) return adapter.clearAll();
+        return idbAdapter.clearAll();
     }
 };

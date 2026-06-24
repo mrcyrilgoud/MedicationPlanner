@@ -4,8 +4,14 @@ import { Search, X } from 'lucide-react';
 import ConfirmationModal from './ConfirmationModal';
 import MedicationItem from './MedicationItem';
 import MedicationEditForm from './MedicationEditForm';
-import { calculateRunoutDate, getLowStockThresholdQuantity } from '../utils/calculations';
-import { getInhalerUsageDisplay } from '../utils/calculations';
+import {
+    calculateRunoutDate,
+    convertInhalerUsageInputToStored,
+    getInhalerUsageDisplay,
+    getLowStockThresholdQuantity,
+    getPuffsPerCanister,
+    isInhalerUnit
+} from '../utils/calculations';
 import { useToast } from '../context/ToastContext';
 
 const FILTER_OPTIONS = [
@@ -109,11 +115,14 @@ const MedicationList = ({
                 ...(
                     editForm.usageRate
                         ? {
-                            usageRate: medication.defaultUnit === 'inhaler' && editForm.usageBasis === 'container'
-                                ? Number(editForm.usageRate) * (Number(medication.puffsPerCanister) || 200)
-                                : Number(editForm.usageRate),
+                            usageRate: convertInhalerUsageInputToStored({
+                                usageRate: editForm.usageRate,
+                                usageBasis: editForm.usageBasis,
+                                puffsPerCanister: getPuffsPerCanister(medication),
+                                isInhaler: isInhalerUnit(medication)
+                            }),
                             usageFrequency: editForm.usageFrequency,
-                            usageBasis: medication.defaultUnit === 'inhaler' ? editForm.usageBasis : null
+                            usageBasis: isInhalerUnit(medication) ? editForm.usageBasis : null
                         }
                         : { usageRate: null, usageFrequency: null, usageBasis: null }
                 ),

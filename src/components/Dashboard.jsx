@@ -64,10 +64,10 @@ const QueueCard = ({ title, subtitle, items, emptyLabel, onNavigate, onTake }) =
 );
 
 const Dashboard = ({ onNavigate }) => {
-    const { activeMedications, getStats, getDashboardQueues, consumeMedication, loading } = useInventory();
+    const { activeMedications, stats, dashboardQueues, consumeMedication, loading } = useInventory();
     const toast = useToast();
-    const { expiringSoonCount, lowStockCount, projectedEmptyCount } = getStats();
-    const queues = getDashboardQueues();
+    const { expiringSoonCount, lowStockCount, projectedEmptyCount } = stats;
+    const queues = dashboardQueues;
 
     const handleQuickTake = async (medication, quickTakeAmount) => {
         if (!quickTakeAmount) {

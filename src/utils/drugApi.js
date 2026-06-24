@@ -6,16 +6,6 @@ const BASE_URL = 'https://rxnav.nlm.nih.gov/REST';
 const apiCache = new Map();
 
 /**
- * Finds the generic name (Active Ingredient) for a given drug name (Brand or otherwise).
- * @param {string} drugName - The name to search (e.g. "Advil")
- * @returns {Promise<string|null>} - The generic name (e.g. "Ibuprofen") or null if not found.
- */
-export const findGenericName = async (drugName) => {
-    const details = await getDrugDetails(drugName);
-    return details ? details.genericName : null;
-};
-
-/**
  * Gets detailed drug info including RxCUI and generic name.
  * @param {string} drugName 
  * @returns {Promise<{rxcui: string, name: string, genericName: string}|null>}
